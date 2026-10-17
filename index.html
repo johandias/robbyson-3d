@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#07111d" />
+  <title>Robbyson — Assistente AeC</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%230b2334'/><circle cx='16' cy='16' r='5' fill='%2354e1f5'/></svg>" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="Robbyson — início">
+      <span class="brand-mark" aria-hidden="true"><i></i></span>
+      <span>Robbyson</span>
+      <small>Assistente AeC</small>
+    </a>
+    <div id="connectionBadge" class="connection-badge" data-state="offline">
+      <span></span><strong>Offline</strong>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="viewer-card" aria-label="Personagem 3D do Robbyson">
+      <div class="viewer-topline">
+        <div>
+          <span class="section-kicker">Presença digital</span>
+          <h1>Olá, eu sou o <em>Robbyson.</em></h1>
+        </div>
+        <div class="viewer-hints" aria-hidden="true">
+          <span>Arraste para girar</span>
+          <span>Role para aproximar</span>
+        </div>
+      </div>
+
+      <div class="stage-shell">
+        <canvas id="viewer" aria-label="Modelo 3D interativo do Robbyson"></canvas>
+        <div class="stage-grid" aria-hidden="true"></div>
+
+        <div id="modelStatus" class="model-status" role="status">
+          <span class="loader"></span>
+          <strong>Preparando o Robbyson</strong>
+          <small id="modelProgress">Carregando modelo 3D…</small>
+        </div>
+
+        <div class="stage-status">
+          <div class="presence-orb" id="presenceOrb" data-mode="idle">
+            <span></span><i></i><b></b>
+          </div>
+          <div>
+            <small id="activityLabel">Em repouso</small>
+            <strong id="activityText">Pronto para conversar</strong>
+          </div>
+        </div>
+
+        <div class="stage-actions">
+          <button id="demoButton" class="icon-button with-label" type="button" title="Demonstrar movimentos">
+            <span aria-hidden="true">✦</span> Demonstrar movimentos
+          </button>
+          <button id="resetCamera" class="icon-button" type="button" title="Centralizar câmera" aria-label="Centralizar câmera">
+            <span aria-hidden="true">⌖</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="capabilities" aria-label="Recursos do assistente">
+        <span><i class="dot cyan"></i>Conversa natural</span>
+        <span><i class="dot violet"></i>Coach de performance</span>
+        <span><i class="dot green"></i>Feedback acolhedor</span>
+        <span id="facialRig"><i class="dot amber"></i>Verificando rig facial</span>
+      </div>
+    </section>
+
+    <aside class="assistant-card" aria-label="Conversa com o Robbyson">
+      <div class="assistant-header">
+        <div>
+          <span class="section-kicker">Conversa em tempo real</span>
+          <h2>Como posso ajudar?</h2>
+        </div>
+        <button id="settingsToggle" class="icon-button" type="button" aria-expanded="true" aria-controls="sessionSettings" title="Configurações da sessão">
+          <span aria-hidden="true">⚙</span>
+        </button>
+      </div>
+
+      <section id="sessionSettings" class="session-settings" aria-label="Configurações da sessão">
+        <label>
+          <span>Modelo</span>
+          <select id="modelSelect">
+            <option value="gpt-realtime-2.1">GPT Realtime 2.1</option>
+            <option value="gpt-realtime-2.1-mini" selected>GPT Realtime 2.1 Mini</option>
+            <option value="gpt-realtime-2">GPT Realtime 2</option>
+            <option value="gpt-realtime-1.5">GPT Realtime 1.5</option>
+          </select>
+        </label>
+        <label>
+          <span>Voz</span>
+          <select id="voiceSelect">
+            <option value="marin" selected>Marin · recomendada</option>
+            <option value="cedar">Cedar · recomendada</option>
+            <option value="coral">Coral</option>
+            <option value="sage">Sage</option>
+            <option value="verse">Verse</option>
+            <option value="alloy">Alloy</option>
+            <option value="ash">Ash</option>
+            <option value="ballad">Ballad</option>
+            <option value="echo">Echo</option>
+            <option value="shimmer">Shimmer</option>
+          </select>
+        </label>
+        <p>Modelo e voz ficam bloqueados durante a conversa. Reconecte para alterá-los.</p>
+      </section>
+
+      <button id="connectButton" class="connect-button" type="button">
+        <span class="connect-icon" aria-hidden="true">◉</span>
+        <span><strong>Iniciar conversa</strong><small>Ativar microfone e conectar</small></span>
+      </button>
+
+      <div id="conversation" class="conversation" aria-live="polite" aria-label="Histórico da conversa">
+        <div class="welcome-message">
+          <div class="mini-avatar">R</div>
+          <div>
+            <strong>Robbyson</strong>
+            <p>Estou aqui para tirar dúvidas, conversar e ajudar você a evoluir com feedbacks claros e tranquilos.</p>
+          </div>
+        </div>
+      </div>
+
+      <form id="messageForm" class="message-form">
+        <label class="sr-only" for="messageInput">Digite sua mensagem</label>
+        <textarea id="messageInput" rows="1" maxlength="2000" placeholder="Conecte para conversar…" disabled></textarea>
+        <button id="sendButton" type="submit" aria-label="Enviar mensagem" title="Enviar mensagem" disabled>➤</button>
+      </form>
+
+      <div class="audio-controls">
+        <button id="microphoneButton" type="button" disabled aria-pressed="false">
+          <span aria-hidden="true">🎙</span><strong>Microfone</strong><small id="microphoneState">Desligado</small>
+        </button>
+        <button id="speakerButton" type="button" disabled aria-pressed="false">
+          <span aria-hidden="true">◖))</span><strong>Áudio</strong><small id="speakerState">Ligado</small>
+        </button>
+      </div>
+
+      <p id="appNotice" class="app-notice" role="alert"></p>
+    </aside>
+  </main>
+
+  <audio id="remoteAudio" autoplay></audio>
+
+  <script type="importmap">
+    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+  </script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
