@@ -49,6 +49,9 @@ const runtime = {
     beatImpulse: 0,
     beatPulse: 0,
     speechBreathPhase: 0,
+    affirmPhase: 0,
+    affirmEnvelope: 0,
+    affirmWave: 0,
   },
   idleState: { action: "breathe", timer: 0, duration: 5.0 },
   audioLevel: 0, audioActive: false, lastAudibleAt: 0, responseInProgress: false, responseFinishedAt: 0, userSpeaking: false,
@@ -1108,6 +1111,7 @@ function getGesturePose(type) {
       // Mão esquerda na horizontal com palma virada para cima (base de apoio / platô de resultados).
       // Mão direita na vertical com a parte inferior tocando a palma da mão esquerda, enquanto o dedão fica para cima.
       return {
+        id: "target_goal",
         leftUpper: armDirections.targetGoalLeftUpper,
         leftLower: armDirections.targetGoalLeftLower,
         rightUpper: armDirections.targetGoalRightUpper,
@@ -1374,7 +1378,7 @@ function animateBody(time, delta) {
 
   const speakingStrength = runtime.gestureLevel * gesture.strength;
 
-  // 3. Gerador de Beats Prosódicos Orgânicos (Impulsos elásticos substituindo onda mecânica):
+  // 3. Gerador de Beats Prosódicos Orgânicos e Cadência Harmônica Afirmativa:
   const kinetics = runtime.kinetics;
   if (speaking) {
     if (energy > 0.04) {
@@ -1382,12 +1386,23 @@ function animateBody(time, delta) {
     }
     const syllableWave = Math.sin(runtime.gestureTime * 3.2) * Math.sin(runtime.gestureTime * 1.6 + 0.4);
     kinetics.beatPulse = THREE.MathUtils.damp(kinetics.beatPulse, Math.max(0, syllableWave), 6.0, delta);
+
+    // Cadência conversacional afirmativa: avança com ritmo orgânico impulsionado pela voz:
+    const affirmCadenceSpeed = 1.95 + energy * 1.4;
+    kinetics.affirmPhase = (kinetics.affirmPhase || 0) + delta * affirmCadenceSpeed;
+    kinetics.affirmEnvelope = THREE.MathUtils.damp(kinetics.affirmEnvelope || 0, 1.0, 3.5, delta);
   } else {
     kinetics.beatImpulse = THREE.MathUtils.damp(kinetics.beatImpulse, 0, 8.0, delta);
     kinetics.beatPulse = THREE.MathUtils.damp(kinetics.beatPulse, 0, 8.0, delta);
+    kinetics.affirmEnvelope = THREE.MathUtils.damp(kinetics.affirmEnvelope || 0, 0, 3.8, delta);
   }
   kinetics.beatImpulse = THREE.MathUtils.damp(kinetics.beatImpulse, 0, 4.8, delta);
   const organicBeat = (kinetics.beatPulse * 0.45 + kinetics.beatImpulse * 0.55) * speakingStrength;
+
+  // Onda harmônica alternada para afirmação natural (uma mão sobe, a outra desce, e voltam à posição base):
+  const rawAffirmSine = Math.sin(kinetics.affirmPhase || 0);
+  const shapedAffirm = Math.sign(rawAffirmSine) * Math.pow(Math.abs(rawAffirmSine), 1.25);
+  kinetics.affirmWave = shapedAffirm * (kinetics.affirmEnvelope || 0) * speakingStrength;
 
   // 4. Contrapposto Natural com Pés 100% Estáveis no Chão:
   const posture = runtime.posture;
@@ -1563,17 +1578,82 @@ function animateBody(time, delta) {
   const prevIsHandsTogether = (prevPose.id === "hands_together" || gesture.previousType === "hands_together") ? 1 : 0;
   const handsTogetherWeight = THREE.MathUtils.lerp(prevIsHandsTogether, targetIsHandsTogether, phraseBlend);
 
+  const targetIsTargetGoal = (targetPose.id === "target_goal" || gesture.type === "target_goal") ? 1 : 0;
+  const prevIsTargetGoal = (prevPose.id === "target_goal" || gesture.previousType === "target_goal") ? 1 : 0;
+  const targetGoalWeight = THREE.MathUtils.lerp(prevIsTargetGoal, targetIsTargetGoal, phraseBlend);
+
   // Batons e acentos comunicativos assimétricos:
-  const leadWeightL = (activeLeadSide === "left" || activeLeadSide === "both") ? 1.0 : 0.35;
-  const leadWeightR = (activeLeadSide === "right" || activeLeadSide === "both") ? 1.0 : 0.35;
+  const leadWeightL = (activeLeadSide === "left" || activeLeadSide === "both") ? 1.0 : 0.40;
+  const leadWeightR = (activeLeadSide === "right" || activeLeadSide === "both") ? 1.0 : 0.40;
 
-  const beatForearmYL = organicBeat * 0.040 * leadWeightL;
-  const beatForearmZL = organicBeat * 0.026 * leadWeightL;
-  const beatWristXL = -organicBeat * 0.065 * leadWeightL;
+  const beatForearmYL = organicBeat * 0.024 * leadWeightL;
+  const beatForearmZL = organicBeat * 0.016 * leadWeightL;
+  const beatWristXL = -organicBeat * 0.040 * leadWeightL;
 
-  const beatForearmYR = organicBeat * 0.040 * leadWeightR;
-  const beatForearmZR = organicBeat * 0.026 * leadWeightR;
-  const beatWristXR = -organicBeat * 0.065 * leadWeightR;
+  const beatForearmYR = organicBeat * 0.024 * leadWeightR;
+  const beatForearmZR = organicBeat * 0.016 * leadWeightR;
+  const beatWristXR = -organicBeat * 0.040 * leadWeightR;
+
+  // Movimento de afirmação harmônica alternada:
+  // "uma mao desce outra sobe e depois volta para a posicao anterior, para afirmar e naturalizar os movimentos"
+  // Respeita posturas com mãos em contato (hands_together ou target_goal) desacoplando a alternância vertical:
+  const openHandsWeight = Math.max(0, 1 - Math.max(handsTogetherWeight, targetGoalWeight));
+  const affirmMotion = (kinetics.affirmWave || 0) * openHandsWeight;
+
+  const affirmAmpRise = 0.125;
+  const affirmAmpDrop = 0.085;
+
+  let affirmDeltaYL = 0;
+  let affirmDeltaZL = 0;
+  let affirmUpperYL = 0;
+  let affirmUpperZL = 0;
+  let affirmWristXL = 0;
+  let affirmOpenL = 0;
+
+  let affirmDeltaYR = 0;
+  let affirmDeltaZR = 0;
+  let affirmUpperYR = 0;
+  let affirmUpperZR = 0;
+  let affirmWristXR = 0;
+  let affirmOpenR = 0;
+
+  if (affirmMotion > 0.0001) {
+    // Mão direita sobe para afirmar, mão esquerda desce suavemente:
+    const riseR = affirmMotion * leadWeightR;
+    const dropL = affirmMotion * leadWeightL;
+
+    affirmDeltaYR = riseR * affirmAmpRise;
+    affirmDeltaZR = riseR * 0.045;
+    affirmUpperYR = riseR * 0.035;
+    affirmUpperZR = riseR * 0.020;
+    affirmWristXR = -riseR * 0.085;
+    affirmOpenR = riseR * 0.06;
+
+    affirmDeltaYL = -dropL * affirmAmpDrop;
+    affirmDeltaZL = -dropL * 0.022;
+    affirmUpperYL = -dropL * 0.025;
+    affirmUpperZL = -dropL * 0.015;
+    affirmWristXL = dropL * 0.045;
+    affirmOpenL = -dropL * 0.04;
+  } else if (affirmMotion < -0.0001) {
+    // Mão esquerda sobe para afirmar, mão direita desce suavemente:
+    const riseL = -affirmMotion * leadWeightL;
+    const dropR = -affirmMotion * leadWeightR;
+
+    affirmDeltaYL = riseL * affirmAmpRise;
+    affirmDeltaZL = riseL * 0.045;
+    affirmUpperYL = riseL * 0.035;
+    affirmUpperZL = riseL * 0.020;
+    affirmWristXL = -riseL * 0.085;
+    affirmOpenL = riseL * 0.06;
+
+    affirmDeltaYR = -dropR * affirmAmpDrop;
+    affirmDeltaZR = -dropR * 0.022;
+    affirmUpperYR = -dropR * 0.025;
+    affirmUpperZR = -dropR * 0.015;
+    affirmWristXR = dropR * 0.045;
+    affirmOpenR = -dropR * 0.04;
+  }
 
   if (handsTogetherWeight > 0.001) {
     const prayerCadence = Math.sin(runtime.gestureTime * 3.4);
@@ -1598,15 +1678,19 @@ function animateBody(time, delta) {
 
   const openBeatWeight = 1 - handsTogetherWeight;
   if (openBeatWeight > 0.001) {
-    speakingPose.leftLower.y += beatForearmYL * openBeatWeight;
-    speakingPose.leftLower.z += beatForearmZL * openBeatWeight;
-    spkLeftHandX += beatWristXL * openBeatWeight;
-    spkLeftOpen = Math.min(1, spkLeftOpen + organicBeat * 0.06 * leadWeightL * openBeatWeight);
+    speakingPose.leftUpper.y += affirmUpperYL * openBeatWeight;
+    speakingPose.leftUpper.z += affirmUpperZL * openBeatWeight;
+    speakingPose.leftLower.y += (beatForearmYL + affirmDeltaYL) * openBeatWeight;
+    speakingPose.leftLower.z += (beatForearmZL + affirmDeltaZL) * openBeatWeight;
+    spkLeftHandX += (beatWristXL + affirmWristXL) * openBeatWeight;
+    spkLeftOpen = THREE.MathUtils.clamp(spkLeftOpen + (organicBeat * 0.04 + affirmOpenL) * leadWeightL * openBeatWeight, 0, 1);
 
-    speakingPose.rightLower.y += beatForearmYR * openBeatWeight;
-    speakingPose.rightLower.z += beatForearmZR * openBeatWeight;
-    spkRightHandX += beatWristXR * openBeatWeight;
-    spkRightOpen = Math.min(1, spkRightOpen + organicBeat * 0.06 * leadWeightR * openBeatWeight);
+    speakingPose.rightUpper.y += affirmUpperYR * openBeatWeight;
+    speakingPose.rightUpper.z += affirmUpperZR * openBeatWeight;
+    speakingPose.rightLower.y += (beatForearmYR + affirmDeltaYR) * openBeatWeight;
+    speakingPose.rightLower.z += (beatForearmZR + affirmDeltaZR) * openBeatWeight;
+    spkRightHandX += (beatWristXR + affirmWristXR) * openBeatWeight;
+    spkRightOpen = THREE.MathUtils.clamp(spkRightOpen + (organicBeat * 0.04 + affirmOpenR) * leadWeightR * openBeatWeight, 0, 1);
   }
 
   // 7. Follow-Through Spring nos Punhos (Inércia física secundária que elimina rigidez):
