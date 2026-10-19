@@ -711,11 +711,11 @@ const armDirections = {
   listenRightUpper: new THREE.Vector3(-0.18, -0.96, 0.16).normalize(),
   listenRightLower: new THREE.Vector3(-0.06, -0.92, 0.38).normalize(),
 
-  // 8. Reflexão / Pensativo (mão direita sobe perto do queixo/peito, cotovelo flexionado):
-  thinkRightUpper: new THREE.Vector3(-0.20, -0.42, 0.88).normalize(),
-  thinkRightLower: new THREE.Vector3(0.16, 0.80, 0.57).normalize(),
-  thinkLeftUpper: new THREE.Vector3(0.22, -0.86, 0.45).normalize(),
-  thinkLeftLower: new THREE.Vector3(-0.12, 0.06, 0.99).normalize(),
+  // 8. Reflexão / Pensativo (postura atenta, acolhedora e elegante à frente da cintura, sem levar punho ao queixo):
+  thinkRightUpper: new THREE.Vector3(-0.20, -0.92, 0.28).normalize(),
+  thinkRightLower: new THREE.Vector3(-0.08, -0.84, 0.52).normalize(),
+  thinkLeftUpper: new THREE.Vector3(0.20, -0.92, 0.28).normalize(),
+  thinkLeftLower: new THREE.Vector3(0.08, -0.84, 0.52).normalize(),
 
   // 9. Saudação inicial amigável (onda calorosa com a mão direita):
   waveRightUpper: new THREE.Vector3(-0.30, -0.38, 0.87).normalize(),
@@ -1424,8 +1424,8 @@ function animateBody(time, delta) {
   posture.headNod = THREE.MathUtils.damp(posture.headNod, 0, 4.0, delta);
 
   let headPitch = (listening ? 0.045 : 0.014) + (speakingStrength * 0.016) + (posture.headNod * 0.032) + (organicBeat * 0.022);
-  let headYaw = (thinking ? -0.06 : -torsoTurn * 0.60);
-  let headRoll = (thinking ? 0.05 : (listening ? -0.03 : activeSideBias * 0.022));
+  let headYaw = (thinking ? -0.02 : -torsoTurn * 0.60);
+  let headRoll = (thinking ? 0.015 : (listening ? -0.03 : activeSideBias * 0.022));
   let neckPitch = (listening ? 0.032 : 0.010) + (speakingStrength * 0.012) + (organicBeat * 0.010);
 
   // Preparação das pernas (flexão de joelhos orgânica, contrapposto dinâmico e pés 100% estáveis):
@@ -1682,15 +1682,19 @@ function animateBody(time, delta) {
     rightHandX = wave * 0.32 * greetingWeight;
     rightOpenness = 0.9 * greetingWeight;
   } else if (thinking) {
-    armPose.rightUpper.lerp(armDirections.thinkRightUpper, 0.92);
-    armPose.rightLower.lerp(armDirections.thinkRightLower, 0.92);
+    // Postura atenta, natural e acolhedora de escuta/reflexão enquanto prepara a resposta:
+    armPose.rightUpper.lerp(armDirections.thinkRightUpper, 0.85);
+    armPose.rightLower.lerp(armDirections.thinkRightLower, 0.85);
     armPose.leftUpper.lerp(armDirections.thinkLeftUpper, 0.85);
     armPose.leftLower.lerp(armDirections.thinkLeftLower, 0.85);
-    rightHandX = 0.28;
-    rightHandY = -0.18;
-    rightHandZ = 0.24;
-    rightOpenness = 0.25;
-    leftOpenness = 0.1;
+    rightHandX = 0.04;
+    rightHandY = 0;
+    rightHandZ = -0.04;
+    leftHandX = 0.04;
+    leftHandY = 0;
+    leftHandZ = 0.04;
+    rightOpenness = 0.58;
+    leftOpenness = 0.58;
   } else if (listening) {
     armPose.leftUpper.lerp(armDirections.listenLeftUpper, 0.88);
     armPose.leftLower.lerp(armDirections.listenLeftLower, 0.88);
