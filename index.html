@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#07111d" />
   <title>Robbyson — Assistente AeC</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='9' fill='%230b2334'/><circle cx='16' cy='16' r='5' fill='%2354e1f5'/></svg>" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=natural-gestures-v1" />
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -57,8 +57,11 @@
         </div>
 
         <div class="stage-actions">
-          <button id="demoButton" class="icon-button with-label" type="button" title="Demonstrar movimentos">
-            <span aria-hidden="true">✦</span> Demonstrar movimentos
+          <button id="demoButton" class="icon-button with-label" type="button" title="Demonstrar movimentos e indicadores">
+            <span aria-hidden="true">✦</span> Demonstrar
+          </button>
+          <button id="toggleBackdrop" class="icon-button" type="button" title="Exibir/ocultar painéis de indicadores no cenário" aria-label="Painéis cenográficos">
+            <span aria-hidden="true">📊</span>
           </button>
           <button id="resetCamera" class="icon-button" type="button" title="Centralizar câmera" aria-label="Centralizar câmera">
             <span aria-hidden="true">⌖</span>
@@ -98,11 +101,11 @@
         <label>
           <span>Voz</span>
           <select id="voiceSelect">
-            <option value="marin" selected>Marin · recomendada</option>
-            <option value="cedar">Cedar · recomendada</option>
+            <option value="verse" selected>Verse · recomendada</option>
+            <option value="marin">Marin</option>
+            <option value="cedar">Cedar</option>
             <option value="coral">Coral</option>
             <option value="sage">Sage</option>
-            <option value="verse">Verse</option>
             <option value="alloy">Alloy</option>
             <option value="ash">Ash</option>
             <option value="ballad">Ballad</option>
@@ -113,10 +116,15 @@
         <p>Modelo e voz ficam bloqueados durante a conversa. Reconecte para alterá-los.</p>
       </section>
 
-      <button id="connectButton" class="connect-button" type="button">
-        <span class="connect-icon" aria-hidden="true">◉</span>
-        <span><strong>Iniciar conversa</strong><small>Ativar microfone e conectar</small></span>
-      </button>
+      <div class="connection-actions">
+        <button id="connectButton" class="connect-button" type="button">
+          <span class="connect-icon" aria-hidden="true">⌨</span>
+          <span><strong>Conversar por texto</strong><small>Digite e ouça as respostas, sem microfone</small></span>
+        </button>
+        <button id="voiceConnectButton" class="voice-connect-button" type="button">
+          <span aria-hidden="true">🎙</span><span>Conversar por voz com microfone</span>
+        </button>
+      </div>
 
       <div id="conversation" class="conversation" aria-live="polite" aria-label="Histórico da conversa">
         <div class="welcome-message">
@@ -130,7 +138,7 @@
 
       <form id="messageForm" class="message-form">
         <label class="sr-only" for="messageInput">Digite sua mensagem</label>
-        <textarea id="messageInput" rows="1" maxlength="2000" placeholder="Conecte para conversar…" disabled></textarea>
+        <textarea id="messageInput" rows="1" maxlength="2000" placeholder="Inicie a conversa por texto…" disabled></textarea>
         <button id="sendButton" type="submit" aria-label="Enviar mensagem" title="Enviar mensagem" disabled>➤</button>
       </form>
 
@@ -152,6 +160,6 @@
   <script type="importmap">
     {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
   </script>
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=contact-motion-v10"></script>
 </body>
 </html>

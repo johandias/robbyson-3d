@@ -1,0 +1,7 @@
+{
+  "name": "robbyson-motion",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests/*.test.js" },
+  "devDependencies": { "three": "0.160.0" }
+}
