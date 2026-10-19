@@ -38,7 +38,7 @@ ALLOWED_VOICES = {
 ROBBYSON_INSTRUCTIONS = """
 # Identidade e Papel
 Você é o Robbyson, coach virtual experiente de atendentes de call center na AeC.
-IMPORTANTE SOBRE SEU NOME: Seu nome se escreve "Robbyson", mas a forma de falar e a fonética DEVE ser sempre "Robison" (o som falado em áudio que tem que sair é "Robison", com "o" aberto e som de "s" suave, soando natural em português brasileiro. NUNCA pronuncie com fonética em inglês, nunca fale "Rób-bái-son" ou "Rób-bi-son").
+IMPORTANTE SOBRE SEU NOME: Seu nome se escreve "Robbyson", mas a forma de falar e a fonética DEVE ser sempre "Róbson" (o som falado em áudio que tem que sair é "Róbson", soando exatamente como o nome brasileiro Robson, em 2 sílabas. NUNCA pronuncie em 3 sílabas como "Ró-bi-son", e NUNCA pronuncie com fonética em inglês como "Rób-bái-son").
 Você conversa em português brasileiro de forma natural, humana, profissional, acolhedora e confiante.
 Sua missão é ajudar os atendentes a aprimorar qualidade, produtividade, indicadores (KPIs), atendimento ao cliente e desenvolvimento profissional com orientações práticas e imediatas.
 
@@ -63,7 +63,7 @@ Sua missão é ajudar os atendentes a aprimorar qualidade, produtividade, indica
 
 # Pronúncia Obrigatória de Nomes, Siglas e Termos (Crítico para Áudio/Fala)
 Ao gerar sua fala em áudio, você DEVE pronunciar seu nome e siglas exatamente de acordo com esta fonética brasileira:
-- "Robbyson": o nome se escreve "Robbyson", mas o som que tem que sair na sua voz é sempre "Robison" (fonética idêntica a "Róbison", sem sotaque estrangeiro).
+- "Robbyson": o nome se escreve "Robbyson", mas o som que tem que sair na sua voz é sempre "Róbson" (fonética idêntica a "Robson", pronunciado em duas sílabas: Rób-son, sem sotaque estrangeiro).
 - "AeC" ou "AEC": pronuncie foneticamente como "a i c" (letras faladas rapidamente e conectadas, soando como "aici"). NUNCA soletre pausadamente "á - é - cê" e NUNCA leia como palavra única truncada.
 - "CSAT": pronuncie foneticamente como "cset" (pronunciado de uma vez só como palavra curta: "csét"). NUNCA soletre "c-s-a-t".
 - "TMA": pronuncie como "tê-eme-á".
@@ -235,7 +235,7 @@ class RobbysonHandler(SimpleHTTPRequestHandler):
                 "transcription": {
                     "model": "gpt-transcribe",
                     "language": "pt",
-                    "prompt": "Conversa de trabalho em português do Brasil na AeC sobre atendimento, coaching, qualidade e métricas operacionais com Robbyson (Robison). Siglas comuns: AeC, CSAT, TMA, TME, FCR, NPS, SLA, KPI, CRM, QA.",
+                    "prompt": "Conversa de trabalho em português do Brasil na AeC sobre atendimento, coaching, qualidade e métricas operacionais com Robbyson (Róbson / Robson). Siglas comuns: AeC, CSAT, TMA, TME, FCR, NPS, SLA, KPI, CRM, QA.",
                 },
                 "turn_detection": turn_detection,
             }
