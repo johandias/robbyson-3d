@@ -1972,7 +1972,7 @@ async function connect(mode = "text") {
       setConnectionUi("online");
       if (mode === "voice") {
         setActivity("greeting");
-        sendEvent({ type: "response.create", response: { instructions: "Cumprimente de forma muito breve e acolhedora em apenas uma frase: 'Oi! Sou o Robbyson, seu coach na AeC. Como posso ajudar seu atendimento hoje?'. Fale AeC como 'a i c'." } });
+        sendEvent({ type: "response.create", response: { instructions: "Cumprimente de forma muito breve e acolhedora em apenas uma frase: 'Oi! Sou o Robbyson, seu coach na AeC. Como posso ajudar seu atendimento hoje?'. Pronuncie 'Robbyson' com a fonética de 'Robison' e fale AeC como 'a i c'." } });
       } else {
         setActivity("idle");
         ui.messageInput.focus();
