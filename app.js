@@ -1,8 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { createMotionController } from "./motion/controller.js";
-import { ConversationMotion } from "./motion/conversation.js";
 
 const $ = (selector) => document.querySelector(selector);
 const ui = {
@@ -18,9 +16,41 @@ const ui = {
 
 const runtime = {
   model: null, rig: {}, rest: new Map(), aimAxes: new Map(), mouthTargets: [], mouthMode: "none", proceduralMouth: null,
-  mode: "idle", previousMode: "idle", modeStartedAt: 0, demoUntil: 0, demoStartedAt: 0,
+  mode: "idle", previousMode: "idle", modeStartedAt: 0, gestureTime: 0, gestureLevel: 0, demoUntil: 0, demoStartedAt: 0,
   currentKpiKey: "general",
-  motion: null, conversationMotion: new ConversationMotion(), motionInput: null, diagnostic: null,
+  gesture: {
+    elapsed: 0,
+    duration: 4.2,
+    type: "explain_dual",
+    previousType: "explain_dual",
+    blend: 1.0,
+    leadSide: "both",
+    strength: 0.85,
+  },
+  fingers: {
+    leftOpen: 0.1,
+    rightOpen: 0.1,
+    leftPoint: 0,
+    rightPoint: 0,
+  },
+  posture: {
+    weightShift: 0.35,
+    targetWeightShift: 0.35,
+    shiftTimer: 7.5,
+    shiftProgress: 1.0,
+    headNod: 0,
+    nodTimer: 3.2,
+  },
+  kinetics: {
+    leftWristLag: { x: 0, y: 0, vx: 0, vy: 0 },
+    rightWristLag: { x: 0, y: 0, vx: 0, vy: 0 },
+    prevForeArmLeft: new THREE.Vector3(),
+    prevForeArmRight: new THREE.Vector3(),
+    beatImpulse: 0,
+    beatPulse: 0,
+    speechBreathPhase: 0,
+  },
+  idleState: { action: "breathe", timer: 0, duration: 5.0 },
   audioLevel: 0, audioActive: false, lastAudibleAt: 0, responseInProgress: false, responseFinishedAt: 0, userSpeaking: false,
   peer: null, channel: null, localStream: null, audioContext: null, analyser: null, analyserData: null, analyserFrequencyData: null,
   connected: false, connecting: false, connectionMode: null, muted: false, speakerMuted: false, streamingMessage: null,
@@ -58,56 +88,53 @@ const keyLight = new THREE.DirectionalLight(0xfff4e8, 0.8);
 keyLight.position.set(-3.5, 5.5, 5.5);
 scene.add(keyLight);
 
-const fillLight = new THREE.DirectionalLight(0xf1f7ff, 0.6);
-fillLight.position.set(3.5, 4.5, 5.5);
+const rimLight = new THREE.SpotLight(0x7ed9eb, 12, 12, Math.PI / 5, 0.7, 1.2);
+rimLight.position.set(-4, 4, -2);
+rimLight.target.position.set(0, 1.4, 0);
+scene.add(rimLight, rimLight.target);
+
+const fillLight = new THREE.PointLight(0xc5baff, 2.4, 8);
+fillLight.position.set(3, 1.7, -2.5);
 scene.add(fillLight);
 
-const topLight = new THREE.DirectionalLight(0xffffff, 0.35);
-topLight.position.set(0, 8, 2);
-topLight.castShadow = true;
-topLight.shadow.mapSize.set(2048, 2048);
-topLight.shadow.bias = -0.00015;
-topLight.shadow.normalBias = 0.025;
-topLight.shadow.radius = 4;
-topLight.shadow.intensity = 0.28;
-scene.add(topLight);
-const rimLight = new THREE.DirectionalLight(0xa4d8ed, 0.18);
-rimLight.position.set(0, 4, -5);
-scene.add(rimLight);
-
 const floor = new THREE.Mesh(
-  new THREE.CircleGeometry(4.2, 96),
-  new THREE.MeshStandardMaterial({ color: 0x263d4c, roughness: 1, metalness: 0, transparent: true, opacity: 0.95 }),
+  new THREE.PlaneGeometry(16, 16),
+  new THREE.MeshStandardMaterial({ color: 0x0a1722, roughness: 0.82, metalness: 0.24, transparent: true, opacity: 0.9 }),
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.025;
 floor.receiveShadow = true;
 scene.add(floor);
 
-for (const [radius, opacity] of [[1.45, 0.28], [2.15, 0.16]]) {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(radius - 0.012, radius, 96),
-    new THREE.MeshBasicMaterial({ color: 0x54e1f5, transparent: true, opacity, side: THREE.DoubleSide }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = -0.012;
-  scene.add(ring);
-}
+const ring = new THREE.Mesh(
+  new THREE.RingGeometry(0.85, 0.95, 48),
+  new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.25 }),
+);
+ring.rotation.x = -Math.PI / 2;
+ring.position.y = -0.024;
+scene.add(ring);
 
+const outerRing = new THREE.Mesh(
+  new THREE.RingGeometry(1.5, 1.54, 64),
+  new THREE.MeshBasicMaterial({ color: 0x818cf8, side: THREE.DoubleSide, transparent: true, opacity: 0.18 }),
+);
+outerRing.rotation.x = -Math.PI / 2;
+outerRing.position.y = -0.024;
+scene.add(outerRing);
+
+const particleCount = 120;
 const particlesGeometry = new THREE.BufferGeometry();
-const particlePositions = new Float32Array(90 * 3);
-for (let i = 0; i < particlePositions.length; i += 3) {
-  const radius = 1.8 + Math.random() * 2.6;
-  const angle = Math.random() * Math.PI * 2;
-  particlePositions[i] = Math.cos(angle) * radius;
-  particlePositions[i + 1] = 0.15 + Math.random() * 3.7;
-  particlePositions[i + 2] = Math.sin(angle) * radius;
+const particlePositions = new Float32Array(particleCount * 3);
+for (let i = 0; i < particleCount * 3; i += 3) {
+  particlePositions[i] = (Math.random() - 0.5) * 4.5;
+  particlePositions[i + 1] = Math.random() * 2.8;
+  particlePositions[i + 2] = (Math.random() - 0.5) * 4.5;
 }
 particlesGeometry.setAttribute("position", new THREE.BufferAttribute(particlePositions, 3));
 const particles = new THREE.Points(particlesGeometry, new THREE.PointsMaterial({ color: 0x78dbf0, size: 0.018, transparent: true, opacity: 0.32 }));
 scene.add(particles);
 
-// ============================================================================
+
 // 3D SCENERY HOLOGRAPHIC KPI PANELS (World Space - Behind avatar in scenery)
 // ============================================================================
 const kpiSceneryBackdrop = new THREE.Group();
@@ -617,6 +644,122 @@ function animateKpiBackdrop(time) {
 const clock = new THREE.Clock();
 const tmpEuler = new THREE.Euler();
 const tmpQuat = new THREE.Quaternion();
+const tmpVec = new THREE.Vector3();
+const tmpVecA = new THREE.Vector3();
+const tmpVecB = new THREE.Vector3();
+const tmpVecC = new THREE.Vector3();
+const tmpVecD = new THREE.Vector3();
+const aimParentQuaternion = new THREE.Quaternion();
+const aimDeltaQuaternion = new THREE.Quaternion();
+const aimTargetQuaternion = new THREE.Quaternion();
+const aimDirection = new THREE.Vector3();
+
+const armPose = {
+  leftUpper: new THREE.Vector3(), leftLower: new THREE.Vector3(),
+  rightUpper: new THREE.Vector3(), rightLower: new THREE.Vector3(),
+};
+const speakingPose = {
+  leftUpper: new THREE.Vector3(), leftLower: new THREE.Vector3(),
+  rightUpper: new THREE.Vector3(), rightLower: new THREE.Vector3(),
+  leftTwist: 0, rightTwist: 0,
+};
+const legPose = {
+  leftUpper: new THREE.Vector3(), leftLower: new THREE.Vector3(),
+  rightUpper: new THREE.Vector3(), rightLower: new THREE.Vector3(),
+};
+
+const armDirections = {
+  // 1. Repouso relaxado natural em pé (braços soltos ao lado do corpo com distância segura das coxas/calça):
+  idleLeftUpper: new THREE.Vector3(0.26, -0.960, 0.08).normalize(),
+  idleLeftLower: new THREE.Vector3(0.19, -0.978, 0.09).normalize(),
+  idleRightUpper: new THREE.Vector3(-0.26, -0.960, 0.08).normalize(),
+  idleRightLower: new THREE.Vector3(-0.19, -0.978, 0.09).normalize(),
+
+  // 2. Apresentação aberta com ambas as mãos (palmas abertas para cima, cotovelos flexionados ~90° à frente da cintura/peito):
+  dualLeftUpper: new THREE.Vector3(0.26, -0.72, 0.64).normalize(),
+  dualLeftLower: new THREE.Vector3(0.20, 0.18, 0.96).normalize(),
+  dualRightUpper: new THREE.Vector3(-0.26, -0.72, 0.64).normalize(),
+  dualRightLower: new THREE.Vector3(-0.20, 0.18, 0.96).normalize(),
+
+  // 3. Explicação com Mão Direita líder (mão direita explica à frente, mão esquerda apoia na cintura):
+  rightLeadUpper: new THREE.Vector3(-0.25, -0.66, 0.70).normalize(),
+  rightLeadLower: new THREE.Vector3(-0.14, 0.24, 0.96).normalize(),
+  leftSupportUpper: new THREE.Vector3(0.20, -0.86, 0.44).normalize(),
+  leftSupportLower: new THREE.Vector3(-0.08, 0.08, 0.99).normalize(),
+
+  // 4. Explicação com Mão Esquerda líder (mão esquerda explica à frente, mão direita apoia na cintura):
+  leftLeadUpper: new THREE.Vector3(0.25, -0.66, 0.70).normalize(),
+  leftLeadLower: new THREE.Vector3(0.14, 0.24, 0.96).normalize(),
+  rightSupportUpper: new THREE.Vector3(-0.20, -0.86, 0.44).normalize(),
+  rightSupportLower: new THREE.Vector3(0.08, 0.08, 0.99).normalize(),
+
+  // 5. Ênfase / Ponto Importante (mão dominante se aproxima do centro do peito com palma aberta afirmativa):
+  emphasisRightUpper: new THREE.Vector3(-0.20, -0.58, 0.78).normalize(),
+  emphasisRightLower: new THREE.Vector3(0.04, 0.28, 0.96).normalize(),
+  emphasisLeftUpper: new THREE.Vector3(0.20, -0.58, 0.78).normalize(),
+  emphasisLeftLower: new THREE.Vector3(-0.04, 0.28, 0.96).normalize(),
+
+  // 6. Comparação ("De um lado... de outro" - mãos em alturas e posições assimétricas):
+  compareLeftUpper: new THREE.Vector3(0.28, -0.62, 0.73).normalize(),
+  compareLeftLower: new THREE.Vector3(0.22, 0.32, 0.92).normalize(),
+  compareRightUpper: new THREE.Vector3(-0.24, -0.76, 0.60).normalize(),
+  compareRightLower: new THREE.Vector3(-0.18, 0.06, 0.98).normalize(),
+
+  // 7. Escuta atenta (braços relaxados em postura acolhedora):
+  listenLeftUpper: new THREE.Vector3(0.18, -0.96, 0.16).normalize(),
+  listenLeftLower: new THREE.Vector3(0.06, -0.92, 0.38).normalize(),
+  listenRightUpper: new THREE.Vector3(-0.18, -0.96, 0.16).normalize(),
+  listenRightLower: new THREE.Vector3(-0.06, -0.92, 0.38).normalize(),
+
+  // 8. Reflexão / Pensativo (mão direita sobe perto do queixo/peito, cotovelo flexionado):
+  thinkRightUpper: new THREE.Vector3(-0.20, -0.42, 0.88).normalize(),
+  thinkRightLower: new THREE.Vector3(0.16, 0.80, 0.57).normalize(),
+  thinkLeftUpper: new THREE.Vector3(0.22, -0.86, 0.45).normalize(),
+  thinkLeftLower: new THREE.Vector3(-0.12, 0.06, 0.99).normalize(),
+
+  // 9. Saudação inicial amigável (onda calorosa com a mão direita):
+  waveRightUpper: new THREE.Vector3(-0.30, -0.38, 0.87).normalize(),
+  waveRightLower: new THREE.Vector3(0.06, 0.94, 0.33).normalize(),
+
+  // 10. Apresentação Ampla (cotovelos mais longe do corpo / abertura ampla explicativa):
+  wideLeftUpper: new THREE.Vector3(0.36, -0.62, 0.70).normalize(),
+  wideLeftLower: new THREE.Vector3(0.14, 0.22, 0.96).normalize(),
+  wideRightUpper: new THREE.Vector3(-0.36, -0.62, 0.70).normalize(),
+  wideRightLower: new THREE.Vector3(-0.14, 0.22, 0.96).normalize(),
+
+  // 11. Mãos Próximas / Posição de Foco Didático e Diálogo (cotovelos perto do corpo, mãos à frente do peito com palmas voltadas uma para a outra, separadas sem se cruzarem):
+  prayerLeftUpper: new THREE.Vector3(0.12, -0.82, 0.56).normalize(),
+  prayerLeftLower: new THREE.Vector3(-0.36, 0.42, 0.83).normalize(),
+  prayerRightUpper: new THREE.Vector3(-0.12, -0.82, 0.56).normalize(),
+  prayerRightLower: new THREE.Vector3(0.36, 0.42, 0.83).normalize(),
+
+  // 12. Gesto de Meta e Atingimento de Indicadores (mão esquerda horizontal com palma para cima, mão direita vertical tocando a palma com dedão para cima):
+  targetGoalLeftUpper: new THREE.Vector3(0.18, -0.74, 0.64).normalize(),
+  targetGoalLeftLower: new THREE.Vector3(-0.36, 0.22, 0.90).normalize(),
+  targetGoalRightUpper: new THREE.Vector3(-0.16, -0.72, 0.67).normalize(),
+  targetGoalRightLower: new THREE.Vector3(0.18, 0.34, 0.92).normalize(),
+};
+
+const legDirections = {
+  // Postura neutra em pé:
+  leftThighNeutral: new THREE.Vector3(0.09, -0.993, -0.07).normalize(),
+  leftShinNeutral: new THREE.Vector3(0.09, -0.992, -0.07).normalize(),
+  rightThighNeutral: new THREE.Vector3(-0.09, -0.993, -0.07).normalize(),
+  rightShinNeutral: new THREE.Vector3(-0.09, -0.992, -0.07).normalize(),
+
+  // Contrapposto - Peso na perna Esquerda (perna esquerda firme, joelho direito com microflexão sagital estável):
+  leftThighFirm: new THREE.Vector3(0.05, -0.997, -0.05).normalize(),
+  leftShinFirm: new THREE.Vector3(0.05, -0.997, -0.05).normalize(),
+  rightThighRelaxed: new THREE.Vector3(-0.13, -0.978, 0.16).normalize(),
+  rightShinRelaxed: new THREE.Vector3(-0.09, -0.965, -0.24).normalize(),
+
+  // Contrapposto - Peso na perna Direita (perna direita firme, joelho esquerdo com microflexão sagital estável):
+  rightThighFirm: new THREE.Vector3(-0.05, -0.997, -0.05).normalize(),
+  rightShinFirm: new THREE.Vector3(-0.05, -0.997, -0.05).normalize(),
+  leftThighRelaxed: new THREE.Vector3(0.13, -0.978, 0.16).normalize(),
+  leftShinRelaxed: new THREE.Vector3(0.09, -0.965, -0.24).normalize(),
+};
+
 const boneAliases = {
   hips: ["hips", "pelvis"],
   spine: ["spine"],
@@ -701,7 +844,7 @@ function mapRig(model) {
 }
 
 function addClosedMouthTarget(mesh) {
-  // This avatar's neutral mesh is an open smile; its MBP target does not close
+  // This avatar neutral mesh is an open smile; its MBP target does not close
   // the lip gap. Compress only the mouth patch, preserving the nose and chin.
   const geometry = mesh.geometry;
   if (mesh.morphTargetDictionary?.Mouth_MBP === undefined || mesh.morphTargetDictionary.Mouth_Closed !== undefined) return;
@@ -742,270 +885,13 @@ function addClosedMouthTarget(mesh) {
   geometry.morphAttributes.normal.push(deltaNormal);
   mesh.updateMorphTargets();
   mesh.morphTargetInfluences[mesh.morphTargetDictionary.Mouth_Closed] = 1;
+  runtime.hasClosedMouth = true;
   closedGeometry.dispose();
-}
-
-// Coordinates are calibrated in Head-local space for the supplied GLB avatar.
-// Deform the existing lips: their UVs, normals and skin material remain intact.
-function createFacialMouth(model, head) {
-  model.updateMatrixWorld(true);
-  const targets = [];
-  const local = new THREE.Vector3();
-  const moved = new THREE.Vector3();
-  const headInverse = head.matrixWorld.clone().invert();
-  let affectedVertices = 0;
-
-  model.traverse((mesh) => {
-    if (!mesh.isSkinnedMesh) return;
-    const headIndex = mesh.skeleton.bones.indexOf(head);
-    if (headIndex < 0) return;
-    mesh.skeleton.update();
-    const geometry = mesh.geometry;
-    const position = geometry.attributes.position;
-    const indices = geometry.attributes.skinIndex;
-    const weights = geometry.attributes.skinWeight;
-    const toHead = headInverse.clone().multiply(mesh.matrixWorld);
-    const toMesh = toHead.clone().invert();
-    const close = position.clone();
-    const open = position.clone();
-    const round = position.clone();
-    let count = 0;
-
-    for (let index = 0; index < position.count; index += 1) {
-      let headWeight = 0;
-      for (let slot = 0; slot < 4; slot += 1) {
-        if (indices.getComponent(index, slot) === headIndex) headWeight += weights.getComponent(index, slot);
-      }
-      if (headWeight < 0.65) continue;
-      // At load time the model is in bind pose. Use the same space for all targets.
-      local.fromBufferAttribute(position, index).applyMatrix4(toHead);
-      if (Math.abs(local.x) > 0.073 || local.y < -0.01 || local.y > 0.069 || local.z < 0.135) continue;
-      const sides = 1 - THREE.MathUtils.smoothstep(Math.abs(local.x), 0.035, 0.073);
-      const front = THREE.MathUtils.smoothstep(local.z, 0.135, 0.173);
-      const top = 1 - THREE.MathUtils.smoothstep(local.y, 0.058, 0.069);
-      const bottom = THREE.MathUtils.smoothstep(local.y, -0.01, 0.019);
-      const influence = sides * front * top * bottom * headWeight;
-      if (influence < 0.001) continue;
-      const lower = 1 - THREE.MathUtils.smoothstep(local.y, 0.047, 0.054);
-      const upper = THREE.MathUtils.smoothstep(local.y, 0.052, 0.058);
-      const lipBand = Math.exp(-(((local.y - 0.047) / 0.013) ** 2));
-
-      moved.copy(local);
-      moved.y += (0.007 * lower - 0.0016 * upper) * influence * lipBand;
-      moved.applyMatrix4(toMesh);
-      close.setXYZ(index, moved.x, moved.y, moved.z);
-
-      moved.copy(local);
-      moved.y -= 0.009 * lower * influence;
-      moved.z -= 0.001 * lower * influence;
-      moved.applyMatrix4(toMesh);
-      open.setXYZ(index, moved.x, moved.y, moved.z);
-
-      moved.copy(local);
-      moved.x *= 1 - 0.105 * influence * lipBand;
-      moved.applyMatrix4(toMesh);
-      round.setXYZ(index, moved.x, moved.y, moved.z);
-      count += 1;
-    }
-    if (!count) return;
-    affectedVertices += count;
-    const morphs = geometry.morphAttributes.position || [];
-    const offset = morphs.length;
-    close.name = "RobbysonLipClose";
-    open.name = "RobbysonLipOpen";
-    round.name = "RobbysonLipRound";
-    geometry.morphAttributes.position = [...morphs, close, open, round];
-    mesh.updateMorphTargets();
-    targets.push({ mesh, close: offset, open: offset + 1, round: offset + 2 });
-  });
-
-  const root = new THREE.Group();
-  root.name = "RobbysonFacialMouth";
-  head.add(root);
-
-  // A curved skin decal hides the mouth painted into the avatar texture. Its color
-  // is sampled from nearby face texels so the edge blends with the character.
-  const faceMesh = [];
-  model.traverse((object) => { if (object.isSkinnedMesh) faceMesh.push(object); });
-  const raycaster = new THREE.Raycaster();
-  const headQuaternion = head.getWorldQuaternion(new THREE.Quaternion());
-  const inverseHead = head.matrixWorld.clone().invert();
-  const sampleSurface = (x, y) => {
-    const origin = new THREE.Vector3(x, y, 0.55).applyMatrix4(head.matrixWorld);
-    raycaster.set(origin, new THREE.Vector3(0, 0, -1).applyQuaternion(headQuaternion));
-    const hit = raycaster.intersectObjects(faceMesh, false)[0];
-    return hit ? { point: hit.point.clone().applyMatrix4(inverseHead), uv: hit.uv, material: hit.object.material } : null;
-  };
-  const cols = 16, rows = 8, patchWidth = 0.084, patchHeight = 0.028;
-  const points = [], surfaceHits = [];
-  for (let row = 0; row <= rows; row++) {
-    points[row] = [];
-    surfaceHits[row] = [];
-    for (let col = 0; col <= cols; col++) {
-      const x = (col / cols - 0.5) * patchWidth;
-      const y = 0.036 + row / rows * patchHeight;
-      const hit = sampleSurface(x, y);
-      surfaceHits[row][col] = hit;
-      points[row][col] = hit ? hit.point : new THREE.Vector3(x, y, 0.17);
-    }
-  }
-  const patchPositions = [], patchUvs = [], patchIndices = [];
-  points.forEach((line, row) => line.forEach((point, col) => {
-    patchPositions.push(point.x, point.y, point.z + 0.00065);
-    patchUvs.push(col / cols, row / rows);
-    if (row < rows && col < cols) {
-      const a = row * (cols + 1) + col, b = a + cols + 1;
-      patchIndices.push(a, b, a + 1, b, b + 1, a + 1);
-    }
-  }));
-
-  const patchCanvas = document.createElement("canvas");
-  patchCanvas.width = 256; patchCanvas.height = 128;
-  const patchContext = patchCanvas.getContext("2d", { willReadFrequently: true });
-  const patchPixels = patchContext.createImageData(patchCanvas.width, patchCanvas.height);
-  const sourceCanvases = new Map();
-  const skinSamples = Array.from({ length: patchCanvas.width }, (_, col) => {
-    const gridCol = Math.round(col / (patchCanvas.width - 1) * cols);
-    const hit = surfaceHits[0][gridCol];
-    const map = hit?.material?.map;
-    if (!map?.image || !hit.uv) return [220, 167, 126];
-    let source = sourceCanvases.get(map);
-    if (!source) {
-      source = document.createElement("canvas");
-      source.width = map.image.width || 2048; source.height = map.image.height || 2048;
-      const ctx = source.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(map.image, 0, 0, source.width, source.height);
-      sourceCanvases.set(map, { canvas: source, ctx });
-    }
-    const { canvas, ctx } = source;
-    const sx = THREE.MathUtils.clamp(Math.floor(hit.uv.x * canvas.width), 0, canvas.width - 1);
-    const sy = THREE.MathUtils.clamp(Math.floor((1 - hit.uv.y) * canvas.height), 0, canvas.height - 1);
-    return Array.from(ctx.getImageData(sx, sy, 1, 1).data).slice(0, 3);
-  });
-  for (let py = 0; py < patchCanvas.height; py++) for (let px = 0; px < patchCanvas.width; px++) {
-    const u = px / (patchCanvas.width - 1), v = py / (patchCanvas.height - 1);
-    const edge = Math.sqrt(((u - 0.5) / 0.5) ** 2 + ((v - 0.5) / 0.5) ** 2);
-    const alpha = THREE.MathUtils.clamp((1 - edge) * 5, 0, 1);
-    const index = (py * patchCanvas.width + px) * 4;
-    patchPixels.data[index] = Math.round(skinSamples[px][0] * 0.82);
-    patchPixels.data[index + 1] = Math.round(skinSamples[px][1] * 0.82);
-    patchPixels.data[index + 2] = Math.round(skinSamples[px][2] * 0.82);
-    patchPixels.data[index + 3] = Math.round(alpha * 255);
-  }
-  patchContext.putImageData(patchPixels, 0, 0);
-  const skinTexture = new THREE.CanvasTexture(patchCanvas);
-  skinTexture.colorSpace = THREE.SRGBColorSpace;
-  const patchGeometry = new THREE.BufferGeometry();
-  patchGeometry.setAttribute("position", new THREE.Float32BufferAttribute(patchPositions, 3));
-  patchGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(patchUvs, 2));
-  patchGeometry.setIndex(patchIndices);
-  patchGeometry.computeVertexNormals();
-  const skinPatch = new THREE.Mesh(patchGeometry, new THREE.MeshBasicMaterial({
-    map: skinTexture, transparent: true, depthWrite: false, depthTest: false, side: THREE.DoubleSide,
-    polygonOffset: true, polygonOffsetFactor: -2,
-  }));
-  skinPatch.name = "SkinCoverForOriginalMouth";
-  skinPatch.renderOrder = 2;
-  root.add(skinPatch);
-
-  const cavity = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.MeshStandardMaterial({
-    color: 0x321411, roughness: 0.95, side: THREE.DoubleSide, depthTest: false,
-    transparent: true, depthWrite: false,
-  }));
-  cavity.name = "SmallSpeechCavity";
-  cavity.scale.set(0.031, 0.0038, 0.0012);
-  cavity.position.set(0, 0.0505, (sampleSurface(0, 0.0505)?.point.z || 0.171) + 0.0018);
-  cavity.renderOrder = 3;
-  root.add(cavity);
-
-  const enamel = new THREE.MeshStandardMaterial({
-    color: 0xded5c8, roughness: 0.48, metalness: 0, depthTest: false,
-    transparent: true, depthWrite: false,
-  });
-  const lowerEnamel = enamel.clone();
-  lowerEnamel.color.multiplyScalar(0.82);
-  const upperTeeth = createDentalArch(enamel, false, sampleSurface);
-  const lowerTeeth = createDentalArch(lowerEnamel, true, sampleSurface);
-  root.add(upperTeeth, lowerTeeth);
-
-  const tongue = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 16, 8),
-    new THREE.MeshStandardMaterial({ color: 0x8c4546, roughness: 0.86 }),
-  );
-  tongue.name = "Tongue";
-  tongue.scale.set(0.022, 0.004, 0.008);
-  tongue.position.set(0, 0.047, (sampleSurface(0, 0.047)?.point.z || 0.173) + 0.0017);
-  tongue.renderOrder = 4;
-  root.add(tongue);
-
-  const mouth = {
-    root, upperTeeth, lowerTeeth, tongue, cavity, targets, affectedVertices,
-    update(opening, roundness) {
-      const amount = THREE.MathUtils.clamp(opening, 0, 0.28);
-      const speech = THREE.MathUtils.smoothstep(amount, 0.012, 0.13);
-      for (const target of targets) {
-        target.mesh.morphTargetInfluences[target.close] = (1 - speech) * 0.94;
-        target.mesh.morphTargetInfluences[target.open] = amount;
-        target.mesh.morphTargetInfluences[target.round] = roundness * speech * 0.65;
-      }
-      lowerTeeth.position.y = -amount * 0.010;
-      tongue.position.y = 0.047 - amount * 0.006;
-      cavity.scale.y = 0.0038 + amount * 0.022;
-      root.userData.opening = amount;
-    },
-  };
-  mouth.update(0, 0);
-  return mouth;
-}
-
-function createDentalArch(material, lower, sampleSurface) {
-  const root = new THREE.Group();
-  root.name = lower ? "LowerTeeth" : "UpperTeeth";
-  // Incisors are broader than lateral teeth; a symmetric pair meets at the center.
-  const widths = [0.006, 0.0074, 0.008, 0.008, 0.0074, 0.006];
-  const gap = 0.0009;
-  let cursor = -(widths.reduce((sum, width) => sum + width, 0) + gap * (widths.length - 1)) / 2;
-  for (let index = 0; index < widths.length; index += 1) {
-    const width = widths[index] * (lower ? 0.91 : 1);
-    const x = cursor + widths[index] / 2;
-    cursor += widths[index] + gap;
-    const lateral = Math.abs(x) / 0.033;
-    const height = (lower ? 0.0058 : 0.0078) * (1 - lateral * 0.13);
-    const radius = 0.0012;
-    const shape = new THREE.Shape();
-    const left = -width / 2;
-    const right = width / 2;
-    const bottom = -height / 2;
-    const top = height / 2;
-    shape.moveTo(left + radius, bottom);
-    shape.lineTo(right - radius, bottom);
-    shape.quadraticCurveTo(right, bottom, right, bottom + radius);
-    shape.lineTo(right, top - radius);
-    shape.quadraticCurveTo(right, top, right - radius, top);
-    shape.lineTo(left + radius, top);
-    shape.quadraticCurveTo(left, top, left, top - radius);
-    shape.lineTo(left, bottom + radius);
-    shape.quadraticCurveTo(left, bottom, left + radius, bottom);
-    const geometry = new THREE.ExtrudeGeometry(shape, {
-      depth: 0.0008, bevelEnabled: true, bevelThickness: 0.00012,
-      bevelSize: 0.0001, bevelSegments: 2, steps: 1, curveSegments: 5,
-    });
-    const tooth = new THREE.Mesh(geometry, material);
-    tooth.name = `${lower ? "Lower" : "Upper"}Tooth${index + 1}`;
-    tooth.renderOrder = 3;
-    const toothX = x * (lower ? 0.93 : 1);
-    const toothY = (lower ? 0.046 : 0.054) + lateral * lateral * 0.00025;
-    const surface = sampleSurface(toothX, toothY);
-    tooth.position.set(toothX, toothY, (surface?.point.z || 0.171) + 0.0002);
-    tooth.rotation.y = -x * 3.0;
-    root.add(tooth);
-  }
-  return root;
 }
 
 function setupProceduralMouth() {
   if (runtime.mouthMode !== "procedural" || !runtime.rig.head) return;
-  runtime.proceduralMouth = createFacialMouth(runtime.model, runtime.rig.head);
+  runtime.proceduralMouth = null;
 }
 
 function showModelError(message, error) {
@@ -1041,7 +927,6 @@ function loadModel() {
           if (!node.isMesh) return;
           addClosedMouthTarget(node);
           node.castShadow = true;
-          // Keep the floor shadow, but avoid hard self-shadow artifacts on the face and clothing.
           node.receiveShadow = false;
           if (Array.isArray(node.material)) node.material.forEach(prepareMaterial);
           else prepareMaterial(node.material);
@@ -1050,19 +935,13 @@ function loadModel() {
         runtime.modelBaseY = model.position.y;
         mapRig(model);
         setupProceduralMouth();
-        runtime.motion = createMotionController(model, runtime.rig);
-        if (new URLSearchParams(location.search).has("motion-diagnostics")) {
-          import("./motion/diagnostics.js").then(({ installDiagnostics }) => {
-            runtime.diagnostic = installDiagnostics({ motion: runtime.motion, scene, camera, controls, ui });
-          }).catch(error => showNotice("Diagnóstico indisponível: " + error.message));
-        }
         scene.add(model);
         model.updateMatrixWorld(true);
         renderer.render(scene, camera);
         window.__robbysonModel = model;
         window.__robbysonRig = runtime.rig;
-        window.__robbysonMouth = runtime.proceduralMouth;
         ui.modelStatus.classList.add("is-hidden");
+        updateKpiBackdrop(runtime.currentKpiKey || "general");
       } catch (error) {
         showModelError("Não foi possível preparar o avatar 3D.", error);
       }
@@ -1080,8 +959,6 @@ function loadModel() {
 
 function prepareMaterial(material) {
   if (!material) return;
-  // The GLB omits metallicFactor (glTF defaults to 1) and exports a specular
-  // color factor of 2. Correct both for skin and fabric under direct light.
   material.metalness = 0;
   material.roughness = 0.88;
   if ("specularIntensity" in material) material.specularIntensity = 0.3;
@@ -1096,6 +973,15 @@ function prepareMaterial(material) {
   material.needsUpdate = true;
 }
 
+function translateBone(part, x = 0, y = 0, z = 0, speed = 5, delta = 1 / 60) {
+  const bone = runtime.rig[part];
+  if (!bone) return;
+  const rest = runtime.rest.get(bone.uuid);
+  if (!rest) return;
+  tmpVec.set(rest.position.x + x, rest.position.y + y, rest.position.z + z);
+  bone.position.lerp(tmpVec, 1 - Math.exp(-speed * delta));
+}
+
 function applyBone(part, x = 0, y = 0, z = 0, speed = 7, delta = 1 / 60) {
   const bone = runtime.rig[part];
   if (!bone) return;
@@ -1106,24 +992,283 @@ function applyBone(part, x = 0, y = 0, z = 0, speed = 7, delta = 1 / 60) {
   bone.quaternion.slerp(tmpQuat, 1 - Math.exp(-speed * delta));
 }
 
-function animateBody(time, delta) {
-  if (!runtime.motion) return;
-  let input = runtime.motionInput || { mode: "idle", speaking: false, audible: false, level: 0 };
-  let mouthLevel = input.audible ? runtime.audioLevel : 0;
-  if (runtime.diagnostic) {
-    input = runtime.diagnostic.sample(delta);
-    mouthLevel = input.level;
-    delta = input.delta;
-  } else if (runtime.demoUntil > performance.now()) {
-    const elapsed = (performance.now() - runtime.demoStartedAt) / 1000;
-    const phrase = elapsed % 4.8 < 4.1;
-    const level = phrase ? Math.max(0, Math.sin(elapsed * 13)) * 0.16 : 0;
-    input = { mode: "speaking", speaking: true, audible: phrase, level, paused: !phrase };
-    mouthLevel = level;
+function aimBone(part, childPart, worldDirection, speed = 7, delta = 1 / 60, twist = 0) {
+  const bone = runtime.rig[part];
+  const child = runtime.rig[childPart];
+  if (!bone || !child || !bone.parent) return;
+  const rest = runtime.rest.get(bone.uuid);
+  let axis = runtime.aimAxes.get(bone.uuid);
+  if (!axis) {
+    const localAxis = child.position.clone().normalize();
+    axis = { local: localAxis, restParent: localAxis.clone().applyQuaternion(rest.quaternion).normalize() };
+    runtime.aimAxes.set(bone.uuid, axis);
   }
-  runtime.motion.update(delta, input);
-  animateMouth(delta, mouthLevel);
-  runtime.diagnostic?.report();
+  bone.parent.updateWorldMatrix(true, false);
+  bone.parent.getWorldQuaternion(aimParentQuaternion).invert();
+  aimDirection.copy(worldDirection).applyQuaternion(aimParentQuaternion).normalize();
+  aimDeltaQuaternion.setFromUnitVectors(axis.restParent, aimDirection);
+  aimTargetQuaternion.copy(aimDeltaQuaternion).multiply(rest.quaternion);
+  if (twist !== 0) {
+    tmpQuat.setFromAxisAngle(axis.local, twist);
+    aimTargetQuaternion.multiply(tmpQuat);
+  }
+  bone.quaternion.slerp(aimTargetQuaternion, 1 - Math.exp(-speed * delta));
+}
+
+function applyFingers(side, openness = 0, point = 0, speed = 6, delta = 1 / 60, thumbUp = 0, dynamicSplay = 0) {
+  const isLeft = side === "left";
+  const open = THREE.MathUtils.clamp(openness + dynamicSplay, 0, 1);
+  const p = THREE.MathUtils.clamp(point, 0, 1);
+  const up = THREE.MathUtils.clamp(thumbUp, 0, 1);
+
+  // Cascata anatômica de flexão:
+  // Index1 (MCP) flexiona/abre suavemente acompanhando a intenção,
+  // Index2 (PIP) e Index3 (DIP) modelam a curvatura acolhedora e natural da palma aberta:
+  const idx1 = -0.10 * open + 0.06 * (1 - open) - 0.06 * p;
+  const idx2 = -0.28 * open + 0.14 * (1 - open) - 0.10 * p;
+  const idx3 = -0.22 * open + 0.10 * (1 - open) - 0.08 * p;
+
+  applyBone(side + "Index1", idx1, 0, 0, speed, delta);
+  applyBone(side + "Index2", idx2, 0, 0, speed, delta);
+  applyBone(side + "Index3", idx3, 0, 0, speed, delta);
+
+  // Polegar: rotação lateral (Z) e extensão vertical (X) com anatomia expressiva:
+  // Em palmas abertas explicativas, o polegar abre lateralmente de forma acolhedora.
+  // Quando thumbUp está ativo (meta/indicadores), eleva-se verticalmente com firmeza.
+  // Em repouso (open próximo de 0), descansa alinhado sem flexionar para dentro da calça:
+  const thb1Z = isLeft ? (0.15 * open - 0.06 * (1 - open)) : (-0.15 * open + 0.06 * (1 - open) - 0.24 * up);
+  const thb2X = -0.18 * open - 0.04 * (1 - open) - 0.32 * up;
+  const thb3X = -0.12 * open - 0.02 * (1 - open) - 0.18 * up;
+
+  applyBone(side + "Thumb1", 0, 0, thb1Z, speed, delta);
+  applyBone(side + "Thumb2", thb2X, 0, 0, speed, delta);
+  applyBone(side + "Thumb3", thb3X, 0, 0, speed, delta);
+}
+
+function getGesturePose(type) {
+  switch (type) {
+    case "explain_dual":
+      // Kendall/McNeill: Palm-Up Open Hand (PUOH) / Metáfora de conduto
+      // Cotovelos a meia distância, palmas abertas para cima oferecendo o conceito
+      return {
+        leftUpper: armDirections.dualLeftUpper,
+        leftLower: armDirections.dualLeftLower,
+        rightUpper: armDirections.dualRightUpper,
+        rightLower: armDirections.dualRightLower,
+        leftTwist: -2.45,
+        rightTwist: 2.45,
+        leftHand: { x: -0.18, y: 0.22, z: -0.06 },
+        rightHand: { x: -0.18, y: -0.22, z: 0.06 },
+        leftOpenness: 0.94,
+        rightOpenness: 0.94,
+        leftPoint: 0.0,
+        rightPoint: 0.0,
+        leadSide: "both",
+      };
+
+    case "explain_wide":
+      // Apresentação Ampla (cotovelos mais longe do corpo, palmas bem para cima):
+      return {
+        leftUpper: armDirections.wideLeftUpper,
+        leftLower: armDirections.wideLeftLower,
+        rightUpper: armDirections.wideRightUpper,
+        rightLower: armDirections.wideRightLower,
+        leftTwist: -2.55,
+        rightTwist: 2.55,
+        leftHand: { x: -0.20, y: 0.25, z: -0.08 },
+        rightHand: { x: -0.20, y: -0.25, z: 0.08 },
+        leftOpenness: 0.96,
+        rightOpenness: 0.96,
+        leftPoint: 0.0,
+        rightPoint: 0.0,
+        leadSide: "both",
+      };
+
+    case "hands_together":
+      // Mãos à frente do peito com palmas voltadas uma para a outra, mantendo distância elegante sem se cruzarem:
+      return {
+        id: "hands_together",
+        leftUpper: armDirections.prayerLeftUpper,
+        leftLower: armDirections.prayerLeftLower,
+        rightUpper: armDirections.prayerRightUpper,
+        rightLower: armDirections.prayerRightLower,
+        leftTwist: -2.09,
+        rightTwist: 2.09,
+        leftHand: { x: -0.10, y: 0.04, z: 0.0 },
+        rightHand: { x: -0.10, y: -0.04, z: 0.0 },
+        leftOpenness: 0.82,
+        rightOpenness: 0.82,
+        leftPoint: 0.0,
+        rightPoint: 0.0,
+        leadSide: "both",
+      };
+
+    case "target_goal":
+      // Gesto de Meta e Atingimento de Indicadores:
+      // Mão esquerda na horizontal com palma virada para cima (base de apoio / platô de resultados).
+      // Mão direita na vertical com a parte inferior tocando a palma da mão esquerda, enquanto o dedão fica para cima.
+      return {
+        leftUpper: armDirections.targetGoalLeftUpper,
+        leftLower: armDirections.targetGoalLeftLower,
+        rightUpper: armDirections.targetGoalRightUpper,
+        rightLower: armDirections.targetGoalRightLower,
+        leftTwist: -2.55,
+        rightTwist: 1.57,
+        leftHand: { x: -0.12, y: 0.12, z: -0.04 },
+        rightHand: { x: -0.08, y: -0.04, z: 0.04 },
+        leftOpenness: 0.95,
+        rightOpenness: 0.82,
+        leftPoint: 0.0,
+        rightPoint: 0.0,
+        rightThumbUp: 1.0,
+        leadSide: "both",
+      };
+
+    case "explain_right":
+      // Mão direita dominante com palma para cima; mão esquerda em apoio perto do corpo
+      return {
+        leftUpper: armDirections.leftSupportUpper,
+        leftLower: armDirections.leftSupportLower,
+        rightUpper: armDirections.rightLeadUpper,
+        rightLower: armDirections.rightLeadLower,
+        leftTwist: -1.1,
+        rightTwist: 2.45,
+        leftHand: { x: 0.05, y: 0.15, z: -0.04 },
+        rightHand: { x: -0.18, y: -0.26, z: 0.08 },
+        leftOpenness: 0.22,
+        rightOpenness: 0.94,
+        leftPoint: 0.0,
+        rightPoint: 0.06,
+        leadSide: "right",
+      };
+
+    case "explain_left":
+      // Mão esquerda dominante com palma para cima; mão direita em apoio perto do corpo
+      return {
+        leftUpper: armDirections.leftLeadUpper,
+        leftLower: armDirections.leftLeadLower,
+        rightUpper: armDirections.rightSupportUpper,
+        rightLower: armDirections.rightSupportLower,
+        leftTwist: -2.45,
+        rightTwist: 1.1,
+        leftHand: { x: -0.18, y: 0.26, z: -0.08 },
+        rightHand: { x: 0.05, y: -0.15, z: 0.04 },
+        leftOpenness: 0.94,
+        rightOpenness: 0.22,
+        leftPoint: 0.06,
+        rightPoint: 0.0,
+        leadSide: "left",
+      };
+
+    case "emphasis":
+      // Gesto de precisão / Ponto focal importante: cotovelo recolhido, palma voltada ao interlocutor
+      return {
+        leftUpper: armDirections.leftSupportUpper,
+        leftLower: armDirections.leftSupportLower,
+        rightUpper: armDirections.emphasisRightUpper,
+        rightLower: armDirections.emphasisRightLower,
+        leftTwist: -1.1,
+        rightTwist: 2.2,
+        leftHand: { x: 0.05, y: 0.12, z: 0.0 },
+        rightHand: { x: -0.20, y: -0.18, z: 0.06 },
+        leftOpenness: 0.20,
+        rightOpenness: 0.72,
+        leftPoint: 0.0,
+        rightPoint: 0.42,
+        leadSide: "right",
+      };
+
+    case "compare":
+      // Contraste espacial ("Por um lado... por outro lado"):
+      // Cotovelos e mãos em alturas e distâncias assimétricas, palmas para cima
+      return {
+        leftUpper: armDirections.compareLeftUpper,
+        leftLower: armDirections.compareLeftLower,
+        rightUpper: armDirections.compareRightUpper,
+        rightLower: armDirections.compareRightLower,
+        leftTwist: -2.4,
+        rightTwist: 2.4,
+        leftHand: { x: -0.16, y: 0.22, z: -0.08 },
+        rightHand: { x: -0.14, y: -0.22, z: 0.08 },
+        leftOpenness: 0.90,
+        rightOpenness: 0.90,
+        leftPoint: 0.0,
+        rightPoint: 0.0,
+        leadSide: "both",
+      };
+
+    default:
+      return getGesturePose("explain_dual");
+  }
+}
+
+function getContextualGestureDuration(type) {
+  switch (type) {
+    case "emphasis":
+      return 1.3 + Math.random() * 0.6;
+    case "explain_right":
+    case "explain_left":
+      return 1.5 + Math.random() * 0.8;
+    case "compare":
+      return 1.8 + Math.random() * 0.7;
+    case "explain_dual":
+    case "explain_wide":
+      return 2.0 + Math.random() * 0.8;
+    case "hands_together":
+    case "target_goal":
+      return 2.4 + Math.random() * 1.0;
+    default:
+      return 1.8 + Math.random() * 0.8;
+  }
+}
+
+function advanceGesturePhrase(forcedType = null) {
+  const gesture = runtime.gesture;
+  const minHold = forcedType ? 0.85 : 1.25;
+  if (gesture.elapsed < minHold) return false;
+
+  gesture.previousType = gesture.type;
+  gesture.elapsed = 0;
+
+  if (forcedType) {
+    gesture.type = forcedType;
+  } else {
+    const current = gesture.type;
+    let pool;
+    if (current === "explain_right") {
+      pool = ["explain_left", "emphasis", "hands_together", "explain_dual"];
+    } else if (current === "explain_left") {
+      pool = ["explain_right", "compare", "target_goal", "explain_wide"];
+    } else if (current === "hands_together") {
+      pool = ["explain_wide", "explain_right", "explain_dual", "emphasis"];
+    } else if (current === "target_goal") {
+      pool = ["explain_right", "explain_wide", "compare", "hands_together"];
+    } else if (current === "emphasis") {
+      pool = ["explain_dual", "explain_right", "explain_left", "compare"];
+    } else {
+      pool = ["explain_right", "hands_together", "explain_left", "target_goal", "emphasis", "explain_wide"];
+    }
+    gesture.type = pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  gesture.duration = getContextualGestureDuration(gesture.type);
+  gesture.blend = 0;
+  gesture.strength = 0.84 + Math.random() * 0.16;
+  return true;
+}
+
+function triggerTargetGoalGesture() {
+  if (runtime.gesture.type === "target_goal" && runtime.gesture.blend < 0.7) return;
+  runtime.gesture.previousType = runtime.gesture.type;
+  runtime.gesture.type = "target_goal";
+  runtime.gesture.blend = 0;
+  runtime.gesture.elapsed = 0;
+  runtime.gesture.duration = 4.5;
+}
+
+function smoothPulse(value, start, end) {
+  if (value <= start || value >= end) return 0;
+  return Math.sin(((value - start) / (end - start)) * Math.PI) ** 2;
 }
 
 function animateProceduralMouth() {
@@ -1131,8 +1276,6 @@ function animateProceduralMouth() {
 }
 
 function animateMouth(delta, level) {
-  // Track relative syllable energy so soft speech is visible and valleys close
-  // the lips. No free-running mouth cycle: silence always produces closure.
   runtime.mouthPeak = Math.max(level, THREE.MathUtils.damp(runtime.mouthPeak, 0.08, 3.5, delta));
   const voiced = THREE.MathUtils.smoothstep(level, 0.008, 0.045);
   const syllable = voiced * THREE.MathUtils.smoothstep(level / Math.max(0.08, runtime.mouthPeak), 0.3, 0.82);
@@ -1158,16 +1301,446 @@ function animateMouth(delta, level) {
     const value = THREE.MathUtils.damp(target.mesh.morphTargetInfluences[target.index], runtime.mouthOpen * weight, 30, delta);
     target.mesh.morphTargetInfluences[target.index] = value < 0.0001 ? 0 : value;
   }
-  // A jaw bone is a fallback; combining it with facial morphs doubles the motion.
   if (runtime.mouthMode === "jaw") applyBone("jaw", runtime.mouthOpen * 0.08, 0, 0, 24, delta);
   animateProceduralMouth();
 }
+
+
+function animateBody(time, delta) {
+  if (!runtime.model) return;
+  const now = performance.now();
+  const demoActive = runtime.demoUntil > now;
+  const mode = demoActive ? "speaking" : runtime.mode;
+  const speaking = demoActive || runtime.audioActive || (!runtime.userSpeaking && runtime.lastAudibleAt > 0 && now - runtime.lastAudibleAt < 650);
+  const listening = mode === "listening";
+  const thinking = mode === "thinking" && !speaking;
+  const greeting = mode === "greeting";
+  const idle = !speaking && !listening && !thinking && !greeting;
+
+  // 1. Envelope Respiratório Conversacional (inspiração ágil e expansiva, expiração suave durante fala):
+  runtime.kinetics.speechBreathPhase += delta * (speaking ? 1.45 : 1.15);
+  const breathCycle = Math.sin(runtime.kinetics.speechBreathPhase);
+  const speechChestExpand = speaking ? (Math.max(0, breathCycle) * 0.024 - Math.max(0, -breathCycle) * 0.010) : (breathCycle * 0.012);
+
+  const demoPhrase = demoActive ? smoothPulse(runtime.gestureTime % 4.0, 0.1, 3.8) : 0;
+  const demoSyllable = Math.max(0, Math.sin(runtime.gestureTime * 14) + 0.3 * Math.sin(runtime.gestureTime * 22));
+  const energy = demoActive ? demoPhrase * demoSyllable * 0.42 : runtime.audioLevel;
+
+  // Transição progressiva de entrada e saída do estado de gesticulação geral (Preparation & Recovery):
+  const gestureTarget = speaking ? 1 : 0;
+  runtime.gestureLevel = THREE.MathUtils.damp(runtime.gestureLevel, gestureTarget, speaking ? 3.6 : 2.4, delta);
+  if (speaking) runtime.gestureTime += delta;
+
+  // 2. Frases gestuais comunicativas e dinâmicas (Kendon Gesture Units & McNeill Dimensions):
+  const gesture = runtime.gesture;
+  gesture.elapsed += delta;
+
+  if (demoActive) {
+    if (gesture.elapsed >= 2.4) {
+      advanceGesturePhrase();
+      const label = gesture.type === "hands_together" ? "Demonstrando mãos próximas e diálogo" :
+                    gesture.type === "target_goal" ? "Demonstrando meta e atingimento de indicadores" :
+                    gesture.type === "explain_wide" ? "Demonstrando apresentação aberta com palmas para cima" :
+                    gesture.type === "emphasis" ? "Demonstrando ênfase e ponto importante" :
+                    gesture.type === "compare" ? "Demonstrando comparação e contraste" :
+                    "Demonstrando postura didática ativa";
+      setActivity("speaking", label);
+    }
+  } else if (speaking) {
+    // Detecção de pausa respiratória na voz entre orações:
+    if (energy < 0.02) {
+      runtime.voicePauseTime = (runtime.voicePauseTime || 0) + delta;
+      if (runtime.voicePauseTime > 0.28 && gesture.elapsed >= 1.5 && gesture.blend >= 0.85) {
+        advanceGesturePhrase();
+        runtime.voicePauseTime = 0;
+      }
+    } else {
+      runtime.voicePauseTime = 0;
+    }
+
+    if (gesture.elapsed >= gesture.duration) {
+      advanceGesturePhrase();
+    }
+  }
+
+  // Crossfade fluido e ágil entre posturas explicativas:
+  gesture.blend = Math.min(1, gesture.blend + delta * 2.0);
+  const phraseBlend = gesture.blend * gesture.blend * (3 - 2 * gesture.blend); // smoothstep
+
+  const prevPose = getGesturePose(gesture.previousType || "explain_dual");
+  const targetPose = getGesturePose(gesture.type || "explain_dual");
+  const activeLeadSide = phraseBlend > 0.5 ? targetPose.leadSide : prevPose.leadSide;
+  gesture.leadSide = activeLeadSide;
+
+  const speakingStrength = runtime.gestureLevel * gesture.strength;
+
+  // 3. Gerador de Beats Prosódicos Orgânicos (Impulsos elásticos substituindo onda mecânica):
+  const kinetics = runtime.kinetics;
+  if (speaking) {
+    if (energy > 0.04) {
+      kinetics.beatImpulse = Math.min(1.0, kinetics.beatImpulse + energy * delta * 12.0);
+    }
+    const syllableWave = Math.sin(runtime.gestureTime * 3.2) * Math.sin(runtime.gestureTime * 1.6 + 0.4);
+    kinetics.beatPulse = THREE.MathUtils.damp(kinetics.beatPulse, Math.max(0, syllableWave), 6.0, delta);
+  } else {
+    kinetics.beatImpulse = THREE.MathUtils.damp(kinetics.beatImpulse, 0, 8.0, delta);
+    kinetics.beatPulse = THREE.MathUtils.damp(kinetics.beatPulse, 0, 8.0, delta);
+  }
+  kinetics.beatImpulse = THREE.MathUtils.damp(kinetics.beatImpulse, 0, 4.8, delta);
+  const organicBeat = (kinetics.beatPulse * 0.45 + kinetics.beatImpulse * 0.55) * speakingStrength;
+
+  // 4. Contrapposto Natural com Pés 100% Estáveis no Chão:
+  const posture = runtime.posture;
+  posture.shiftTimer -= delta;
+  if (speaking) {
+    if (posture.shiftTimer <= 0) {
+      posture.targetWeightShift = (posture.targetWeightShift <= 0 ? 1 : -1) * (0.65 + Math.random() * 0.25);
+      posture.shiftTimer = 6.5 + Math.random() * 3.5;
+    }
+  } else if (idle || listening) {
+    if (posture.shiftTimer <= 0) {
+      posture.targetWeightShift = (posture.targetWeightShift <= 0 ? 1 : -1) * (0.55 + Math.random() * 0.3);
+      posture.shiftTimer = 14.0 + Math.random() * 8.0;
+    }
+  }
+
+  // Transição contínua com suavização orgânica:
+  posture.weightShift = THREE.MathUtils.damp(posture.weightShift, posture.targetWeightShift, 1.4, delta);
+  const factorRight = Math.max(0, posture.weightShift);
+  const factorLeft = Math.max(0, -posture.weightShift);
+
+  // 5. Tronco, Coluna e Cabeça (Cadeia Cinética Integrada):
+  const bodyLean = listening ? 0.040 : thinking ? -0.015 : (0.024 + speakingStrength * 0.020);
+  const activeSideBias = gesture.leadSide === "right" ? 1 : gesture.leadSide === "left" ? -1 : 0;
+  const torsoTurn = activeSideBias * speakingStrength * 0.048;
+  const chestRoll = activeSideBias * speakingStrength * 0.018;
+
+  // Micro-acenos de cabeça afirmativos e acolhedores (professor):
+  posture.nodTimer -= delta;
+  if (posture.nodTimer <= 0) {
+    posture.headNod = 1.0;
+    posture.nodTimer = speaking ? (3.0 + Math.random() * 2.2) : (4.5 + Math.random() * 3.5);
+  }
+  posture.headNod = THREE.MathUtils.damp(posture.headNod, 0, 4.0, delta);
+
+  let headPitch = (listening ? 0.045 : 0.014) + (speakingStrength * 0.016) + (posture.headNod * 0.032) + (organicBeat * 0.022);
+  let headYaw = (thinking ? -0.06 : -torsoTurn * 0.60);
+  let headRoll = (thinking ? 0.05 : (listening ? -0.03 : activeSideBias * 0.022));
+  let neckPitch = (listening ? 0.032 : 0.010) + (speakingStrength * 0.012) + (organicBeat * 0.010);
+
+  // Preparação das pernas (flexão de joelhos orgânica, contrapposto dinâmico e pés 100% estáveis):
+  const freeKneeBase = 0.065;
+  const freeKneeDynamic = (Math.sin(time * 1.9) * 0.024 + energy * 0.030) * speakingStrength;
+  const totalFreeKneeFlex = freeKneeBase + freeKneeDynamic;
+  const speechKneeDip = (Math.sin(time * 2.3) * 0.014 + Math.max(0, energy - 0.06) * 0.028) * speakingStrength;
+
+  legPose.leftUpper.copy(legDirections.leftThighNeutral);
+  legPose.leftLower.copy(legDirections.leftShinNeutral);
+  legPose.rightUpper.copy(legDirections.rightThighNeutral);
+  legPose.rightLower.copy(legDirections.rightShinNeutral);
+
+  if (factorRight > 0.001) {
+    legPose.rightUpper.lerp(legDirections.rightThighFirm, factorRight);
+    legPose.rightLower.lerp(legDirections.rightShinFirm, factorRight);
+    legPose.leftUpper.lerp(legDirections.leftThighRelaxed, factorRight);
+    legPose.leftLower.lerp(legDirections.leftShinRelaxed, factorRight);
+
+    legPose.leftUpper.z += factorRight * totalFreeKneeFlex;
+    legPose.leftLower.z -= factorRight * (totalFreeKneeFlex * 1.35);
+  } else if (factorLeft > 0.001) {
+    legPose.leftUpper.lerp(legDirections.leftThighFirm, factorLeft);
+    legPose.leftLower.lerp(legDirections.leftShinFirm, factorLeft);
+    legPose.rightUpper.lerp(legDirections.rightThighRelaxed, factorLeft);
+    legPose.rightLower.lerp(legDirections.rightShinRelaxed, factorLeft);
+
+    legPose.rightUpper.z += factorLeft * totalFreeKneeFlex;
+    legPose.rightLower.z -= factorLeft * (totalFreeKneeFlex * 1.35);
+  }
+
+  legPose.leftUpper.z += speechKneeDip * 0.35;
+  legPose.leftLower.z -= speechKneeDip * 0.50;
+  legPose.rightUpper.z += speechKneeDip * 0.35;
+  legPose.rightLower.z -= speechKneeDip * 0.50;
+
+  // Compensação para solas dos pés 100% planas no chão:
+  let leftFootPitch = (factorRight > 0.001 ? factorRight * (0.045 + totalFreeKneeFlex * 0.65) : 0) + speechKneeDip * 0.28;
+  let rightFootPitch = (factorLeft > 0.001 ? factorLeft * (0.045 + totalFreeKneeFlex * 0.65) : 0) + speechKneeDip * 0.28;
+  let leftFootRoll = -posture.weightShift * 0.032;
+  let rightFootRoll = -posture.weightShift * 0.032;
+
+  // Pelve (Hips):
+  let hipsX = posture.weightShift * 0.022;
+  let hipsY = breathCycle * 0.0018 - Math.abs(posture.weightShift) * 0.0025 - speechKneeDip * 0.012 - (factorRight + factorLeft) * totalFreeKneeFlex * 0.007;
+  let hipsTilt = bodyLean * 0.35 + breathCycle * 0.002 + speechKneeDip * 0.015;
+  let hipsRoll = posture.weightShift * 0.038;
+  let hipsYaw = torsoTurn * 0.4 + posture.weightShift * 0.015;
+
+  applyBone("hips", hipsTilt, hipsRoll, hipsYaw, 5.5, delta);
+  translateBone("hips", hipsX, hipsY, 0, 5, delta);
+
+  // Coluna em cadeia articulada distribuída:
+  const spineCompRoll = -posture.weightShift * 0.026;
+  applyBone("spine", bodyLean * 0.35, torsoTurn * 0.25, spineCompRoll, 5.0, delta);
+  applyBone("spine1", bodyLean * 0.40, torsoTurn * 0.45, spineCompRoll * 0.7 - chestRoll * 0.3, 5.0, delta);
+  applyBone("spine2", bodyLean * 0.35 + speechChestExpand + organicBeat * 0.016, torsoTurn * 0.85, chestRoll, 5.0, delta);
+  applyBone("neck", neckPitch, 0, 0, 5.0, delta);
+  applyBone("head", headPitch, headYaw, headRoll, 5.0, delta);
+
+  legPose.leftUpper.normalize();
+  legPose.leftLower.normalize();
+  legPose.rightUpper.normalize();
+  legPose.rightLower.normalize();
+
+  aimBone("leftUpLeg", "leftLeg", legPose.leftUpper, 6, delta);
+  aimBone("rightUpLeg", "rightLeg", legPose.rightUpper, 6, delta);
+  aimBone("leftLeg", "leftFoot", legPose.leftLower, 6, delta);
+  aimBone("rightLeg", "rightFoot", legPose.rightLower, 6, delta);
+
+  applyBone("leftFoot", leftFootPitch, 0, leftFootRoll, 6, delta);
+  applyBone("rightFoot", rightFootPitch, 0, rightFootRoll, 6, delta);
+  applyBone("leftToeBase", 0, 0, 0, 6, delta);
+  applyBone("rightToeBase", 0, 0, 0, 6, delta);
+
+  // 6. Braços, Cotovelos, Mãos e Dedos:
+  const waitingFactor = Math.max(0, 1 - runtime.gestureLevel);
+  const breathSwayUpperZ = (breathCycle * 0.020 + Math.cos(time * 0.68) * 0.010) * waitingFactor;
+  const breathSwayUpperX = (Math.sin(time * 0.92) * 0.012) * waitingFactor;
+  const breathSwayLowerZ = (Math.sin(time * 1.35 - 0.45) * 0.025) * waitingFactor;
+  const idleFingersCurl = (0.04 + Math.sin(time * 1.1) * 0.020) * waitingFactor;
+  const idleWristBreath = Math.sin(time * 1.35) * 0.015 * waitingFactor;
+
+  const restAsymmetryLeft = (factorLeft * 0.014 - factorRight * 0.008) * waitingFactor;
+  const restAsymmetryRight = (factorRight * 0.014 - factorLeft * 0.008) * waitingFactor;
+
+  tmpVecA.set(
+    armDirections.idleLeftUpper.x + breathSwayUpperX,
+    armDirections.idleLeftUpper.y,
+    armDirections.idleLeftUpper.z + breathSwayUpperZ + restAsymmetryLeft
+  ).normalize();
+
+  tmpVecB.set(
+    armDirections.idleLeftLower.x + breathSwayUpperX * 0.5,
+    armDirections.idleLeftLower.y,
+    armDirections.idleLeftLower.z + breathSwayLowerZ + restAsymmetryLeft * 1.2
+  ).normalize();
+
+  tmpVecC.set(
+    armDirections.idleRightUpper.x - breathSwayUpperX,
+    armDirections.idleRightUpper.y,
+    armDirections.idleRightUpper.z + breathSwayUpperZ + restAsymmetryRight
+  ).normalize();
+
+  tmpVecD.set(
+    armDirections.idleRightLower.x - breathSwayUpperX * 0.5,
+    armDirections.idleRightLower.y,
+    armDirections.idleRightLower.z + breathSwayLowerZ + restAsymmetryRight * 1.2
+  ).normalize();
+
+  // Interpolação contínua entre posturas de fala:
+  speakingPose.leftUpper.lerpVectors(prevPose.leftUpper, targetPose.leftUpper, phraseBlend);
+  speakingPose.leftLower.lerpVectors(prevPose.leftLower, targetPose.leftLower, phraseBlend);
+  speakingPose.rightUpper.lerpVectors(prevPose.rightUpper, targetPose.rightUpper, phraseBlend);
+  speakingPose.rightLower.lerpVectors(prevPose.rightLower, targetPose.rightLower, phraseBlend);
+
+  let spkLeftTwist = THREE.MathUtils.lerp(prevPose.leftTwist ?? 0, targetPose.leftTwist ?? 0, phraseBlend);
+  let spkRightTwist = THREE.MathUtils.lerp(prevPose.rightTwist ?? 0, targetPose.rightTwist ?? 0, phraseBlend);
+
+  let spkLeftHandX = THREE.MathUtils.lerp(prevPose.leftHand.x, targetPose.leftHand.x, phraseBlend);
+  let spkLeftHandY = THREE.MathUtils.lerp(prevPose.leftHand.y, targetPose.leftHand.y, phraseBlend);
+  let spkLeftHandZ = THREE.MathUtils.lerp(prevPose.leftHand.z, targetPose.leftHand.z, phraseBlend);
+
+  let spkRightHandX = THREE.MathUtils.lerp(prevPose.rightHand.x, targetPose.rightHand.x, phraseBlend);
+  let spkRightHandY = THREE.MathUtils.lerp(prevPose.rightHand.y, targetPose.rightHand.y, phraseBlend);
+  let spkRightHandZ = THREE.MathUtils.lerp(prevPose.rightHand.z, targetPose.rightHand.z, phraseBlend);
+
+  let spkLeftOpen = THREE.MathUtils.lerp(prevPose.leftOpenness, targetPose.leftOpenness, phraseBlend);
+  let spkRightOpen = THREE.MathUtils.lerp(prevPose.rightOpenness, targetPose.rightOpenness, phraseBlend);
+  let spkLeftPoint = THREE.MathUtils.lerp(prevPose.leftPoint, targetPose.leftPoint, phraseBlend);
+  let spkRightPoint = THREE.MathUtils.lerp(prevPose.rightPoint, targetPose.rightPoint, phraseBlend);
+  let spkRightThumbUp = THREE.MathUtils.lerp(prevPose.rightThumbUp ?? 0, targetPose.rightThumbUp ?? 0, phraseBlend);
+
+  const targetIsHandsTogether = (targetPose.id === "hands_together" || gesture.type === "hands_together") ? 1 : 0;
+  const prevIsHandsTogether = (prevPose.id === "hands_together" || gesture.previousType === "hands_together") ? 1 : 0;
+  const handsTogetherWeight = THREE.MathUtils.lerp(prevIsHandsTogether, targetIsHandsTogether, phraseBlend);
+
+  // Batons e acentos comunicativos assimétricos:
+  const leadWeightL = (activeLeadSide === "left" || activeLeadSide === "both") ? 1.0 : 0.35;
+  const leadWeightR = (activeLeadSide === "right" || activeLeadSide === "both") ? 1.0 : 0.35;
+
+  const beatForearmYL = organicBeat * 0.040 * leadWeightL;
+  const beatForearmZL = organicBeat * 0.026 * leadWeightL;
+  const beatWristXL = -organicBeat * 0.065 * leadWeightL;
+
+  const beatForearmYR = organicBeat * 0.040 * leadWeightR;
+  const beatForearmZR = organicBeat * 0.026 * leadWeightR;
+  const beatWristXR = -organicBeat * 0.065 * leadWeightR;
+
+  if (handsTogetherWeight > 0.001) {
+    const prayerCadence = Math.sin(runtime.gestureTime * 3.4);
+    const prayerPulse = (Math.max(0, prayerCadence) * 0.024 + energy * 0.038) * handsTogetherWeight;
+    const prayerReach = (Math.sin(runtime.gestureTime * 2.0) * 0.020 + energy * 0.028) * handsTogetherWeight;
+    const prayerSwayX = Math.sin(runtime.gestureTime * 1.5) * 0.022 * handsTogetherWeight;
+    const prayerWristPitch = (-0.06 - prayerPulse * 1.4) * handsTogetherWeight;
+    const prayerFingerMod = Math.sin(runtime.gestureTime * 3.4) * 0.04 * handsTogetherWeight;
+
+    speakingPose.leftLower.x += prayerSwayX;
+    speakingPose.rightLower.x += prayerSwayX;
+    speakingPose.leftLower.y += prayerPulse;
+    speakingPose.rightLower.y += prayerPulse;
+    speakingPose.leftLower.z += prayerReach;
+    speakingPose.rightLower.z += prayerReach;
+
+    spkLeftHandX += prayerWristPitch;
+    spkRightHandX += prayerWristPitch;
+    spkLeftOpen = THREE.MathUtils.clamp(spkLeftOpen + prayerFingerMod, 0.84, 0.94);
+    spkRightOpen = THREE.MathUtils.clamp(spkRightOpen + prayerFingerMod, 0.84, 0.94);
+  }
+
+  const openBeatWeight = 1 - handsTogetherWeight;
+  if (openBeatWeight > 0.001) {
+    speakingPose.leftLower.y += beatForearmYL * openBeatWeight;
+    speakingPose.leftLower.z += beatForearmZL * openBeatWeight;
+    spkLeftHandX += beatWristXL * openBeatWeight;
+    spkLeftOpen = Math.min(1, spkLeftOpen + organicBeat * 0.06 * leadWeightL * openBeatWeight);
+
+    speakingPose.rightLower.y += beatForearmYR * openBeatWeight;
+    speakingPose.rightLower.z += beatForearmZR * openBeatWeight;
+    spkRightHandX += beatWristXR * openBeatWeight;
+    spkRightOpen = Math.min(1, spkRightOpen + organicBeat * 0.06 * leadWeightR * openBeatWeight);
+  }
+
+  // 7. Follow-Through Spring nos Punhos (Inércia física secundária que elimina rigidez):
+  const dForeArmLY = speakingPose.leftLower.y - kinetics.prevForeArmLeft.y;
+  const dForeArmLZ = speakingPose.leftLower.z - kinetics.prevForeArmLeft.z;
+  const dForeArmRY = speakingPose.rightLower.y - kinetics.prevForeArmRight.y;
+  const dForeArmRZ = speakingPose.rightLower.z - kinetics.prevForeArmRight.z;
+  kinetics.prevForeArmLeft.copy(speakingPose.leftLower);
+  kinetics.prevForeArmRight.copy(speakingPose.rightLower);
+
+  const wristImpulseLX = (-dForeArmLY * 2.2 - dForeArmLZ * 1.5) * runtime.gestureLevel;
+  const wristImpulseRX = (-dForeArmRY * 2.2 - dForeArmRZ * 1.5) * runtime.gestureLevel;
+
+  kinetics.leftWristLag.vx += wristImpulseLX * 14.0;
+  kinetics.leftWristLag.vx -= kinetics.leftWristLag.x * 38.0 * delta;
+  kinetics.leftWristLag.vx -= kinetics.leftWristLag.vx * 14.0 * delta;
+  kinetics.leftWristLag.x += kinetics.leftWristLag.vx * delta;
+
+  kinetics.rightWristLag.vx += wristImpulseRX * 14.0;
+  kinetics.rightWristLag.vx -= kinetics.rightWristLag.x * 38.0 * delta;
+  kinetics.rightWristLag.vx -= kinetics.rightWristLag.vx * 14.0 * delta;
+  kinetics.rightWristLag.x += kinetics.rightWristLag.vx * delta;
+
+  spkLeftHandX += kinetics.leftWristLag.x;
+  spkRightHandX += kinetics.rightWristLag.x;
+
+  speakingPose.leftUpper.normalize();
+  speakingPose.leftLower.normalize();
+  speakingPose.rightUpper.normalize();
+  speakingPose.rightLower.normalize();
+
+  // Interpolação de Preparation & Recovery:
+  armPose.leftUpper.lerpVectors(tmpVecA, speakingPose.leftUpper, runtime.gestureLevel);
+  armPose.leftLower.lerpVectors(tmpVecB, speakingPose.leftLower, runtime.gestureLevel);
+  armPose.rightUpper.lerpVectors(tmpVecC, speakingPose.rightUpper, runtime.gestureLevel);
+  armPose.rightLower.lerpVectors(tmpVecD, speakingPose.rightLower, runtime.gestureLevel);
+
+  let currentLeftTwist = THREE.MathUtils.lerp(-0.35, spkLeftTwist, runtime.gestureLevel);
+  let currentRightTwist = THREE.MathUtils.lerp(0.35, spkRightTwist, runtime.gestureLevel);
+
+  const elbowDamp = 1 - handsTogetherWeight * 0.65;
+  const elbowBreathe = Math.sin(time * 1.5) * 0.022 * runtime.gestureLevel * elbowDamp;
+  armPose.leftUpper.x += elbowBreathe;
+  armPose.rightUpper.x -= elbowBreathe;
+
+  const idleLeftHandX = 0.03 + idleWristBreath;
+  const idleLeftHandZ = 0.07;
+  const idleRightHandX = 0.03 + idleWristBreath;
+  const idleRightHandZ = -0.07;
+
+  let leftHandX = THREE.MathUtils.lerp(idleLeftHandX, spkLeftHandX, runtime.gestureLevel);
+  let leftHandY = THREE.MathUtils.lerp(0, spkLeftHandY, runtime.gestureLevel);
+  let leftHandZ = THREE.MathUtils.lerp(idleLeftHandZ, spkLeftHandZ, runtime.gestureLevel);
+
+  let rightHandX = THREE.MathUtils.lerp(idleRightHandX, spkRightHandX, runtime.gestureLevel);
+  let rightHandY = THREE.MathUtils.lerp(0, spkRightHandY, runtime.gestureLevel);
+  let rightHandZ = THREE.MathUtils.lerp(idleRightHandZ, spkRightHandZ, runtime.gestureLevel);
+
+  let leftOpenness = THREE.MathUtils.lerp(idleFingersCurl, spkLeftOpen, runtime.gestureLevel);
+  let rightOpenness = THREE.MathUtils.lerp(idleFingersCurl, spkRightOpen, runtime.gestureLevel);
+  let leftPoint = THREE.MathUtils.lerp(0, spkLeftPoint, runtime.gestureLevel);
+  let rightPoint = THREE.MathUtils.lerp(0, spkRightPoint, runtime.gestureLevel);
+  let currentRightThumbUp = THREE.MathUtils.lerp(0, spkRightThumbUp, runtime.gestureLevel);
+
+  // Modos especiais (saudação, pensamento e escuta):
+  const welcomeTime = greeting ? (performance.now() - runtime.modeStartedAt) / 1000 : 99;
+  const wave = greeting && welcomeTime < 3.4 ? Math.sin(welcomeTime * 7.5) : 0;
+  const greetingWeight = greeting ? Math.max(0, 1 - Math.max(0, welcomeTime - 3.0) / 0.5) : 0;
+
+  if (greetingWeight > 0.01) {
+    armPose.rightUpper.lerp(armDirections.waveRightUpper, greetingWeight);
+    armPose.rightLower.lerp(armDirections.waveRightLower, greetingWeight);
+    rightHandX = wave * 0.32 * greetingWeight;
+    rightOpenness = 0.9 * greetingWeight;
+  } else if (thinking) {
+    armPose.rightUpper.lerp(armDirections.thinkRightUpper, 0.92);
+    armPose.rightLower.lerp(armDirections.thinkRightLower, 0.92);
+    armPose.leftUpper.lerp(armDirections.thinkLeftUpper, 0.85);
+    armPose.leftLower.lerp(armDirections.thinkLeftLower, 0.85);
+    rightHandX = 0.28;
+    rightHandY = -0.18;
+    rightHandZ = 0.24;
+    rightOpenness = 0.25;
+    leftOpenness = 0.1;
+  } else if (listening) {
+    armPose.leftUpper.lerp(armDirections.listenLeftUpper, 0.88);
+    armPose.leftLower.lerp(armDirections.listenLeftLower, 0.88);
+    armPose.rightUpper.lerp(armDirections.listenRightUpper, 0.88);
+    armPose.rightLower.lerp(armDirections.listenRightLower, 0.88);
+    leftHandX = 0.06;
+    rightHandX = 0.06;
+    leftOpenness = 0.12;
+    rightOpenness = 0.12;
+  }
+
+  armPose.leftUpper.normalize();
+  armPose.leftLower.normalize();
+  armPose.rightUpper.normalize();
+  armPose.rightLower.normalize();
+
+  // 8. Clavículas/Ombros Ativos (acompanhando alcance frontal e elevação dos braços):
+  const shoulderReachL = (armPose.leftUpper.z > 0.25 ? (armPose.leftUpper.z - 0.25) * 0.12 : 0) * runtime.gestureLevel;
+  const shoulderReachR = (armPose.rightUpper.z > 0.25 ? (armPose.rightUpper.z - 0.25) * 0.12 : 0) * runtime.gestureLevel;
+  const shoulderLiftL = (armPose.leftLower.y > 0 ? armPose.leftLower.y * 0.06 : 0) * runtime.gestureLevel;
+  const shoulderLiftR = (armPose.rightLower.y > 0 ? armPose.rightLower.y * 0.06 : 0) * runtime.gestureLevel;
+
+  applyBone("leftShoulder", 0, shoulderReachL * 0.08, -shoulderLiftL + speechChestExpand * 0.2, 4.8, delta);
+  applyBone("rightShoulder", 0, -shoulderReachR * 0.08, shoulderLiftR - speechChestExpand * 0.2, 4.8, delta);
+
+  aimBone("leftArm", "leftForeArm", armPose.leftUpper, 6.5, delta);
+  aimBone("rightArm", "rightForeArm", armPose.rightUpper, 6.5, delta);
+  aimBone("leftForeArm", "leftHand", armPose.leftLower, 7.5, delta, currentLeftTwist);
+  aimBone("rightForeArm", "rightHand", armPose.rightLower, 7.5, delta, currentRightTwist);
+
+  applyBone("leftHand", leftHandX, leftHandY, leftHandZ, 6.5, delta);
+  applyBone("rightHand", rightHandX, rightHandY, rightHandZ, 6.5, delta);
+
+  // Aplicação de dedos coordenada com micro-expansão de fala:
+  const dynamicSplayL = organicBeat * 0.06 * leadWeightL;
+  const dynamicSplayR = organicBeat * 0.06 * leadWeightR;
+  applyFingers("left", leftOpenness, leftPoint, 5.5, delta, 0, dynamicSplayL);
+  applyFingers("right", rightOpenness, rightPoint, 5.5, delta, currentRightThumbUp, dynamicSplayR);
+
+  // Expressão facial e boca sincronizada:
+  animateMouth(delta, demoActive || runtime.audioActive ? energy : 0);
+}
+
 
 function updateAudioLevel(delta) {
   const now = performance.now();
   if (!runtime.analyser || !runtime.analyserData) {
     runtime.audioLevel = THREE.MathUtils.damp(runtime.audioLevel, 0, 18, delta);
     runtime.mouthRound = THREE.MathUtils.damp(runtime.mouthRound, 0, 14, delta);
+    if (!runtime.responseInProgress && runtime.responseFinishedAt && now - runtime.responseFinishedAt > 450 && runtime.mode === "thinking") setActivity("idle");
     return;
   }
 
@@ -1197,7 +1770,17 @@ function updateAudioLevel(delta) {
     runtime.mouthRound = THREE.MathUtils.damp(runtime.mouthRound, roundTarget, 14, delta);
   }
 
-  // The transport/playback bridge consumes this measurement in animate().
+  if (normalized > 0.018 && !runtime.userSpeaking) {
+    runtime.lastAudibleAt = now;
+    if (!runtime.audioActive) {
+      runtime.audioActive = true;
+      setActivity("speaking");
+    }
+  } else if (runtime.audioActive && (runtime.userSpeaking || now - runtime.lastAudibleAt > 220)) {
+    runtime.audioActive = false;
+    if (runtime.mode === "speaking") setActivity(runtime.responseInProgress ? "thinking" : "idle");
+  }
+  if (!runtime.audioActive && !runtime.responseInProgress && runtime.responseFinishedAt && now - runtime.responseFinishedAt > 450 && runtime.mode === "thinking") setActivity("idle");
 }
 
 function setActivity(mode, customText = "") {
@@ -1239,13 +1822,6 @@ function animate() {
   const delta = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
   updateAudioLevel(delta);
-  runtime.motionInput = runtime.conversationMotion.update(delta, runtime.audioLevel,
-    !ui.remoteAudio.paused && ui.remoteAudio.readyState >= 2);
-  runtime.audioActive = runtime.motionInput.audible;
-  if (runtime.audioActive) runtime.lastAudibleAt = performance.now();
-  if (!runtime.diagnostic && runtime.demoUntil <= performance.now() && runtime.mode !== runtime.motionInput.mode) {
-    setActivity(runtime.motionInput.mode);
-  }
   animateBody(time, delta);
   animateKpiBackdrop(time);
   particles.rotation.y = time * 0.025;
@@ -1253,11 +1829,11 @@ function animate() {
   renderer.render(scene, camera);
 }
 
+
 async function connect(mode = "text") {
   if (runtime.connected) { disconnect(); return; }
   if (runtime.connecting) return;
   runtime.demoUntil = 0;
-  runtime.motion?.forceGesture(null);
   runtime.connecting = true;
   runtime.connectionMode = mode;
   setConnectionUi("connecting");
@@ -1361,8 +1937,7 @@ function cleanupConnection() {
   runtime.audioLevel = 0; runtime.audioActive = false; runtime.lastAudibleAt = 0;
   runtime.mouthRound = 0;
   runtime.mouthPeak = 0.12;
-  runtime.conversationMotion.reset();
-  runtime.motion?.reset();
+  runtime.gestureLevel = 0; runtime.gestureTime = 0;
   runtime.responseInProgress = false; runtime.responseFinishedAt = 0; runtime.userSpeaking = false;
 }
 
@@ -1420,6 +1995,9 @@ function sendText(text) {
   if (userTopic && userTopic !== runtime.currentKpiKey) {
     updateKpiBackdrop(userTopic);
   }
+  if (/\\b(meta|metas|indicador|indicadores|atingir|atingimento|atingiu|kpi|kpis|csat|tmr|fcr|desempenho|resultado|resultados)\\b/i.test(cleanText)) {
+    triggerTargetGoalGesture();
+  }
   if (!sendEvent({ type: "response.create", response: { output_modalities: ["audio"] } })) {
     showNotice("A mensagem foi enviada, mas a resposta não iniciou. Reconecte e tente novamente.");
     return true;
@@ -1435,7 +2013,6 @@ function sendText(text) {
 function handleRealtimeEvent(messageEvent) {
   let event;
   try { event = JSON.parse(messageEvent.data); } catch { return; }
-  runtime.conversationMotion.event(event);
   switch (event.type) {
     case "input_audio_buffer.speech_started":
       runtime.userSpeaking = true; runtime.audioActive = false; runtime.audioLevel = 0;
@@ -1503,6 +2080,17 @@ function appendStreamingText(delta) {
   if (!runtime.streamingMessage) beginStreamingMessage();
   runtime.streamingMessage.textContent += delta;
   scrollConversation();
+
+  // Detectar menções a metas, indicadores e resultados para disparar o gesto de meta:
+  if (/\\b(meta|metas|indicador|indicadores|atingir|atingimento|atingiu|kpi|kpis|csat|tmr|fcr|desempenho|resultado|resultados)\\b/i.test(delta)) {
+    triggerTargetGoalGesture();
+  }
+
+  // Alternância dinâmica de gesto ao concluir oração ou frase (pontuação):
+  if (/[.!?]\\s*$/.test(delta)) {
+    advanceGesturePhrase();
+  }
+
   const streamingTopic = detectTopicFromText(runtime.streamingMessage.textContent);
   if (streamingTopic && streamingTopic !== runtime.currentKpiKey) updateKpiBackdrop(streamingTopic);
 }
@@ -1584,25 +2172,39 @@ ui.speakerButton.addEventListener("click", () => {
 ui.resetCamera.addEventListener("click", () => { camera.position.copy(defaultCamera); controls.target.set(0, 1.42, 0); controls.update(); });
 let demoCycleIndex = 0;
 ui.demoButton.addEventListener("click", () => {
-  if (runtime.connected || !runtime.motion) return;
-  const demos = [
-    ["palms", "Palmas juntas, com aproximação e contato suave"],
-    ["stacked", "Uma mão apoiada sobre a outra"],
-    ["explain_right", "Explicação e pequeno passo no lugar"],
-  ];
-  const [gesture, label] = demos[demoCycleIndex++ % demos.length];
-  runtime.demoStartedAt = performance.now();
-  runtime.demoUntil = runtime.demoStartedAt + 13000;
-  const demoStartedAt = runtime.demoStartedAt;
-  runtime.motion.forceGesture(gesture);
-  if (gesture === "explain_right") runtime.motion.requestStep();
+  if (runtime.connected) return;
+  demoCycleIndex = (demoCycleIndex + 1) % 6;
+  runtime.demoUntil = performance.now() + 14000;
+  runtime.gestureTime = 0;
+  runtime.gesture.elapsed = 999;
+
+  if (demoCycleIndex === 1) {
+    updateKpiBackdrop(kpiTopics.tmr);
+    advanceGesturePhrase("explain_wide");
+  } else if (demoCycleIndex === 2) {
+    updateKpiBackdrop(kpiTopics.csat);
+    advanceGesturePhrase("emphasis");
+  } else if (demoCycleIndex === 3) {
+    updateKpiBackdrop(kpiTopics.fcr);
+    advanceGesturePhrase("target_goal");
+  } else if (demoCycleIndex === 4) {
+    updateKpiBackdrop(kpiTopics.absenteismo);
+    advanceGesturePhrase("compare");
+  } else if (demoCycleIndex === 5) {
+    updateKpiBackdrop(kpiTopics.qualidade);
+    advanceGesturePhrase("hands_together");
+  } else {
+    updateKpiBackdrop(kpiTopics.general);
+    advanceGesturePhrase("explain_dual");
+  }
+
+  const label = runtime.gesture.type === "hands_together" ? "Demonstrando mãos próximas e diálogo" :
+                runtime.gesture.type === "target_goal" ? "Demonstrando meta e atingimento de indicadores" :
+                runtime.gesture.type === "explain_wide" ? "Demonstrando apresentação aberta com palmas para cima" :
+                runtime.gesture.type === "emphasis" ? "Demonstrando ênfase e ponto importante" :
+                runtime.gesture.type === "compare" ? "Demonstrando comparação e contraste" :
+                "Demonstrando postura didática ativa";
   setActivity("speaking", label);
-  window.setTimeout(() => {
-    if (runtime.demoStartedAt !== demoStartedAt) return;
-    runtime.demoUntil = 0;
-    runtime.motion.forceGesture(null);
-    setActivity("idle");
-  }, 13000);
 });
 ui.toggleBackdrop?.addEventListener("click", () => {
   kpiSceneryBackdrop.visible = !kpiSceneryBackdrop.visible;

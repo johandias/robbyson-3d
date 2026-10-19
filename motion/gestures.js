@@ -7,11 +7,11 @@ export function seededRandom(seed = 417) {
   return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t ^= t + Math.imul(t ^ t >>> 7, 61 | t); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
 }
 export function pose() {
-  return { name: 'rest', left: new T.Vector3(), right: new T.Vector3(), leftQ: new T.Quaternion(), rightQ: new T.Quaternion(), open: 0.15 };
+  return { name: 'rest', left: new T.Vector3(), right: new T.Vector3(), leftQ: new T.Quaternion(), rightQ: new T.Quaternion(), open: 0.15, restWeight: 1 };
 }
 export function copyPose(to, from) {
   to.name = from.name; to.left.copy(from.left); to.right.copy(from.right);
-  to.leftQ.copy(from.leftQ); to.rightQ.copy(from.rightQ); to.open = from.open;
+  to.leftQ.copy(from.leftQ); to.rightQ.copy(from.rightQ); to.open = from.open; to.restWeight = from.restWeight;
   return to;
 }
 export function makePose(rig, name) {
@@ -22,22 +22,25 @@ export function makePose(rig, name) {
     p[side].set(x * h, y + rise * h, z + reach * h);
     rig.orientation(side, direction.set(dx, dy, dz), normal.set(nx, ny, nz), p[side + 'Q']);
   };
-  set('left', 0.142, -0.045, 0.04, 0.05, -1, 0.12, -1, 0, 0.15);
-  set('right', -0.142, -0.045, 0.04, -0.05, -1, 0.12, 1, 0, 0.15);
+  // Use the original model-specific idle arm directions as the rest pose.
+  for (const side of ['left', 'right']) {
+    p[side].copy(rig.restArms[side].palm);
+    p[side + 'Q'].copy(rig.restArms[side].rotation);
+  }
   if (name === 'rest') return p;
-  p.open = 0.83;
-  set('left', 0.13, 0.035, 0.125, -0.15, 0.05, 1, 0, 1, -0.05);
-  set('right', -0.13, 0.035, 0.125, 0.15, 0.05, 1, 0, 1, -0.05);
+  p.open = 0.83; p.restWeight = 0;
+  set('left', 0.12, 0.035, 0.125, -0.15, 0.05, 1, 0, 1, -0.05);
+  set('right', -0.12, 0.035, 0.125, 0.15, 0.05, 1, 0, 1, -0.05);
   if (name === 'explain_right' || name === 'emphasis') {
-    set('right', -0.16, name === 'emphasis' ? 0.13 : 0.095, 0.145, -0.2, 0.35, 1, 0, 1, -0.35);
+    set('right', -0.14, name === 'emphasis' ? 0.13 : 0.095, 0.145, -0.2, 0.35, 1, 0, 1, -0.35);
   } else if (name === 'explain_left') {
-    set('left', 0.16, 0.095, 0.145, 0.2, 0.35, 1, 0, 1, -0.35);
+    set('left', 0.14, 0.095, 0.145, 0.2, 0.35, 1, 0, 1, -0.35);
   } else if (name === 'explain_dual') {
-    set('left', 0.17, 0.085, 0.145, 0.3, 0.2, 1, 0, 1, -0.2);
-    set('right', -0.17, 0.085, 0.145, -0.3, 0.2, 1, 0, 1, -0.2);
+    set('left', 0.145, 0.085, 0.145, 0.3, 0.2, 1, 0, 1, -0.2);
+    set('right', -0.145, 0.085, 0.145, -0.3, 0.2, 1, 0, 1, -0.2);
   } else if (name === 'compare') {
-    set('left', 0.18, 0.12, 0.14, 0.3, 0.2, 1, 0, 1, -0.2);
-    set('right', -0.15, 0.035, 0.14, -0.2, 0.15, 1, 0, 1, -0.15);
+    set('left', 0.15, 0.12, 0.14, 0.3, 0.2, 1, 0, 1, -0.2);
+    set('right', -0.135, 0.035, 0.14, -0.2, 0.15, 1, 0, 1, -0.15);
   } else if (name === 'palms') {
     p.open = 1;
     set('left', 0, 0.11, 0.15, 0, 1, 0.12, -1, 0, 0);
@@ -128,6 +131,7 @@ export class GestureDirector {
     this.current.leftQ.slerpQuaternions(this.from.leftQ, this.to.leftQ, t);
     this.current.rightQ.slerpQuaternions(this.from.rightQ, this.to.rightQ, t);
     this.current.open = T.MathUtils.lerp(this.from.open, this.to.open, t);
+    this.current.restWeight = T.MathUtils.lerp(this.from.restWeight, this.to.restWeight, t);
     this.current.name = this.name;
     if (this.elapsed >= this.duration) this.next();
     return this.current;

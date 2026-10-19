@@ -26,11 +26,12 @@ export class BodyRig {
     this.hips = this.rest.get('hips').world.clone();
     this.chest = this.rest.get('spine2').world.clone();
     this.hands = {};
-    this.arms = {}; this.legs = {};
+    this.arms = {}; this.legs = {}; this.restArms = {};
     for (const side of ['left', 'right']) {
       this.hands[side] = this.measureHand(side);
-      this.arms[side] = this.chain(side + 'Arm', side + 'ForeArm', side + 'Hand', 8, 145);
+      this.arms[side] = this.chain(side + 'Arm', side + 'ForeArm', side + 'Hand', 3, 145);
       this.legs[side] = this.chain(side + 'UpLeg', side + 'Leg', side + 'Foot', 3, 65);
+      this.restArms[side] = this.measureRestArm(side);
     }
     this.torsoRadius = this.height * 0.092;
     this.margin = this.height * 0.0015;
@@ -49,6 +50,25 @@ export class BodyRig {
       middleRestAxis: c.world.clone().sub(b.world).normalize(),
       elbow: new T.Vector3(), target: new T.Vector3(), actual: new T.Vector3(), flex: 0,
     };
+  }
+
+  // Let the upper arms hang beside the torso. Keep a small forward elbow
+  // bend, rather than opening the elbows sideways to make room for the hands.
+  measureRestArm(side) {
+    const sign = side === 'left' ? 1 : -1;
+    const chain = this.arms[side];
+    const upper = new T.Vector3(sign * 0.12, -0.99, 0.02).normalize();
+    const lower = new T.Vector3(sign * 0.10, -0.99, 0.12).normalize();
+    const root = this.rest.get(chain.root).world;
+    const elbow = root.clone().addScaledVector(upper, chain.first);
+    const wrist = elbow.clone().addScaledVector(lower, chain.second);
+    const rotation = new T.Quaternion().setFromUnitVectors(chain.middleRestAxis, lower)
+      .multiply(this.rest.get(chain.middle).worldRotation)
+      .multiply(this.rest.get(chain.end).rotation);
+    const palm = this.hands[side].center.clone().applyQuaternion(rotation).add(wrist);
+    const axis = wrist.clone().sub(root).normalize();
+    chain.restPole = upper.clone().addScaledVector(axis, -upper.dot(axis)).normalize();
+    return { palm, rotation, upper, lower };
   }
 
   measureHand(side) {
@@ -145,7 +165,7 @@ export class BodyRig {
   }
 
   // Analytic two-link IK; the pole fixes the bend plane even near extension.
-  solve(chain, target, pole, palmNormal = null) {
+  solve(chain, target, pole, palmNormal = null, twistWeight = 1) {
     const [a, direction, bend, elbow, lower, axis, secondary, cross, localSecondary] = this.v;
     this.bones[chain.root].getWorldPosition(a);
     direction.copy(target).sub(a);
@@ -165,7 +185,7 @@ export class BodyRig {
     this.worldRotation(chain.root, this.q[0]);
     lower.copy(chain.target).sub(elbow).normalize();
     this.q[0].setFromUnitVectors(chain.middleRestAxis, lower).multiply(this.rest.get(chain.middle).worldRotation);
-    if (palmNormal) {
+    if (palmNormal && twistWeight > 0) {
       // Distribute pronation to the forearm, instead of twisting only the wrist.
       const side = chain.end.startsWith('left') ? 'left' : 'right';
       localSecondary.copy(this.hands[side].normal).applyQuaternion(this.rest.get(chain.end).worldRotation)
@@ -175,7 +195,8 @@ export class BodyRig {
       cross.copy(palmNormal).addScaledVector(lower, -palmNormal.dot(lower)).normalize();
       if (cross.lengthSq() > 0.5 && secondary.lengthSq() > 0.5) {
         this.q[1].setFromUnitVectors(secondary, cross);
-        this.q[0].premultiply(this.q[1]);
+        this.q[2].identity().slerp(this.q[1], twistWeight);
+        this.q[0].premultiply(this.q[2]);
       }
     }
     this.worldRotation(chain.middle, this.q[0]);
@@ -184,13 +205,16 @@ export class BodyRig {
     this.metrics.reachError = Math.max(this.metrics.reachError, chain.actual.distanceTo(target));
   }
 
-  arm(side, position, rotation) {
+  arm(side, position, rotation, restWeight = 0) {
     const hand = this.hands[side];
     hand.position.copy(position); hand.rotation.copy(rotation);
     hand.wrist.copy(hand.center).applyQuaternion(rotation).negate().add(position);
     const normal = this.v[10].copy(hand.normal).applyQuaternion(rotation);
-    const pole = this.v[9].set(side === 'left' ? 1 : -1, -0.65, -0.15);
-    this.solve(this.arms[side], hand.wrist, pole, normal);
+    // Keep elbows close to the body in gestures, and recover the resting bend plane at rest.
+    const sign = side === 'left' ? 1 : -1;
+    const gesturePole = this.v[9].set(sign * 0.22, -0.45, -0.86).normalize();
+    const pole = gesturePole.lerp(this.arms[side].restPole, restWeight);
+    this.solve(this.arms[side], hand.wrist, pole, normal, 1 - restWeight);
     this.worldRotation(side + 'Hand', rotation);
     const flex = this.arms[side].flex;
     this.metrics.minElbow = Math.min(this.metrics.minElbow, flex);

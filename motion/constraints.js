@@ -42,7 +42,10 @@ export class HandContacts {
     const h = this.rig.height;
     const nearY = T.MathUtils.clamp(position.y, this.rig.hips.y - h * 0.07, chest.y);
     const dx = position.x - chest.x, dy = position.y - nearY, dz = position.z - chest.z;
-    const rx = h * 0.115, ry = h * 0.09, rz = h * 0.105;
+    // The waist is narrower than the chest. A constant chest-width capsule
+    // pushes hanging hands outward and below their reachable arm length.
+    const torsoRise = T.MathUtils.smoothstep(position.y, this.rig.hips.y, chest.y);
+    const rx = h * T.MathUtils.lerp(0.095, 0.115, torsoRise), ry = h * 0.09, rz = h * 0.105;
     const distance = Math.sqrt((dx / rx) ** 2 + (dy / ry) ** 2 + (dz / rz) ** 2);
     if (distance < 1) {
       const factor = 1 / Math.max(distance, 0.01);

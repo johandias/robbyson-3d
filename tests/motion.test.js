@@ -15,7 +15,7 @@ function check(c) {
   assert.ok(d.separation >= -h * 0.00001, 'Palm volumes penetrate: ' + JSON.stringify(d));
   assert.ok(d.footDrift < h * 0.001, 'Foot anchor drift: ' + JSON.stringify(d));
   assert.ok(d.reachError < h * 0.001, 'Unreachable target: ' + JSON.stringify(d));
-  for (const flex of d.elbow) assert.ok(flex >= 7.99 && flex <= 145.01);
+  for (const flex of d.elbow) assert.ok(flex >= 2.99 && flex <= 145.01);
   for (const flex of d.knee) assert.ok(flex >= 2.99 && flex <= 65.01);
   for (const bone of Object.values(c.rig.bones)) assert.ok(Math.abs(bone.quaternion.length() - 1) < 1e-5);
 }
@@ -30,6 +30,38 @@ test('the real GLB supports the required chains and measured palm envelopes', as
     assert.ok(c.rig.hands[side].half.z > 0);
     assert.ok(c.rig.hands[side].half.x > c.rig.hands[side].half.z);
     assert.ok(c.rig.arms[side].first > 0);
+  }
+});
+
+test('resting arms recover the original model-specific directions', async () => {
+  const c = await controller(), h = c.rig.height;
+  c.forceGesture('rest'); run(c, 2, 60, idle);
+  for (const side of ['left', 'right']) {
+    const target = c.director.current[side];
+    const shoulder = c.rig.bones[side + 'Arm'].getWorldPosition(new T.Vector3());
+    const elbow = c.rig.arms[side].elbow;
+    const wrist = c.rig.bones[side + 'Hand'].getWorldPosition(new T.Vector3());
+    const original = c.rig.restArms[side];
+    assert.ok(target.distanceTo(original.palm) < 1e-8);
+    assert.ok(elbow.clone().sub(shoulder).normalize().distanceTo(original.upper) < 0.05);
+    assert.ok(Math.abs(elbow.x - shoulder.x) < c.rig.arms[side].first * 0.18,
+      side + ' resting upper arm must hang within 10 degrees of vertical in front view');
+    assert.ok(wrist.clone().sub(elbow).normalize().distanceTo(original.lower) < 0.05);
+    assert.ok(c.rig.arms[side].flex < 10, side + ' resting elbow should have only a gentle bend');
+  }
+  assert.ok(c.metrics.reachError < h * 0.001);
+});
+
+test('elbows change bend direction smoothly when leaving and returning to rest', async () => {
+  const c = await controller(), h = c.rig.height;
+  for (const [gesture, input] of [['explain_right', speaking], ['rest', idle]]) {
+    c.forceGesture(gesture);
+    for (let i = 0; i < 120; i++) {
+      const previous = [c.rig.arms.left.elbow.clone(), c.rig.arms.right.elbow.clone()];
+      c.update(1 / 60, input); check(c);
+      for (const [index, side] of ['left', 'right'].entries())
+        assert.ok(previous[index].distanceTo(c.rig.arms[side].elbow) < h * 0.015, side + ' elbow jumped during transition');
+    }
   }
 });
 

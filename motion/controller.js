@@ -18,7 +18,7 @@ class MotionController {
     this.time = 0; this.level = 0; this.activity = 0; this.shift = 0;
     this.shiftTarget = 0.4; this.shiftWait = 14; this.nod = 0; this.nodWait = 5;
     this.positions = { left: new T.Vector3(), right: new T.Vector3() };
-    this.pelvis = new T.Vector3(); this.chest = new T.Vector3(); this.offset = new T.Vector3();
+    this.pelvis = new T.Vector3(); this.chest = new T.Vector3(); this.offset = new T.Vector3(); this.rootOffset = new T.Vector3();
     this.normal = new T.Vector3(); this.actual = new T.Vector3();
     this.debug = null; this.metrics = { separation: 0, footDrift: 0, reachError: 0 };
     this.lastInput = { mode: 'idle', speaking: false, audible: false, level: 0 };
@@ -78,21 +78,25 @@ class MotionController {
     const idle = this.director.name === 'rest' ? 1 : 0;
     for (const side of ['left', 'right']) {
       const sign = side === 'left' ? 1 : -1;
-      const pos = this.positions[side].copy(p[side]).add(this.offset);
+      r.offset(side + 'Shoulder', 0, sign * this.activity * 0.006, -sign * this.activity * 0.012);
+      r.bones[side + 'Arm'].getWorldPosition(this.rootOffset);
+      this.rootOffset.sub(r.rest.get(side + 'Arm').world);
+      const pos = this.positions[side].copy(p[side])
+        .addScaledVector(this.rootOffset, p.restWeight)
+        .addScaledVector(this.offset, 1 - p.restWeight);
       // One shared contact frame: no independent wrist noise when hands meet.
       if (!contact) {
         const quiet = input.mode === 'listening' ? 0.45 : 1;
-        pos.z += idle * quiet * h * 0.003 * Math.sin(this.time * 0.7 + sign * 0.5);
-        pos.y += idle * quiet * h * 0.0015 * Math.sin(this.time * 0.95 + sign);
+        pos.z += idle * quiet * h * 0.0004 * Math.sin(this.time * 0.7 + sign * 0.5);
+        pos.y += idle * quiet * h * 0.00025 * Math.sin(this.time * 0.95 + sign);
         pos.y += (1 - idle) * this.activity * this.level * h * 0.008;
       }
       this.contacts.protectTorso(pos, this.chest);
-      r.offset(side + 'Shoulder', 0, sign * this.activity * 0.006, -sign * this.activity * 0.012);
     }
     r.metrics.reachError = 0; r.metrics.footDrift = 0;
     this.contacts.project(this.positions.left, p.leftQ, this.positions.right, p.rightQ);
     for (const side of ['left', 'right']) {
-      r.arm(side, this.positions[side], p[side + 'Q']);
+      r.arm(side, this.positions[side], p[side + 'Q'], p.restWeight);
       r.fingers(side, p.open);
       r.leg(side, this.feet.positions[side]);
     }
